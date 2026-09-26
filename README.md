@@ -1,2 +1,2 @@
 # fso-py
-Full stack open by Python
+Full stack open but Python
