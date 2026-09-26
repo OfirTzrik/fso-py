@@ -1,26 +1,21 @@
 import reflex as rx
 
 def header(course_name: str) -> rx.Component:
-	return rx.fragment(
-		rx.el.h1(f"{course_name}"),
-	)
+	return rx.el.h1(f"{course_name}")
 
 def part(part_name: str, num_exercises: int) -> rx.Component:
-	return rx.fragment(
-		rx.el.p(f"{part_name} {num_exercises}")
-	)
+	return rx.el.p(f"{part_name} {num_exercises}")
 
-def content(parts: list, exercises: list) -> rx.Component:
-	part1, part2, part3 = parts
-	exercises1, exercises2, exercises3 = exercises
+def content(parts_and_exercises: list[tuple[str, int]]) -> rx.Component:
+	p_e1, p_e2, p_e3 = parts_and_exercises
 
 	return rx.fragment(
-		part(part1, exercises1),
-		part(part2, exercises2),
-		part(part3, exercises3),
+		part(p_e1[0], p_e1[1]),
+		part(p_e2[0], p_e2[1]),
+		part(p_e3[0], p_e3[1]),
 	)
 
-def total(exercises: list) -> rx.Component:
+def total(exercises: list[int]) -> rx.Component:
 	return rx.fragment(
 		rx.el.p(f"Number of exercises {sum(exercises)}")
 	)
@@ -36,7 +31,7 @@ def index() -> rx.Component:
 
 	return rx.fragment(
 		header(course),
-		content([part1, part2, part3], [exercises1, exercises2, exercises3]),
+		content([(part1, exercises1), (part2, exercises2), (part3, exercises3)]),
 		total([exercises1, exercises2, exercises3])
 	)
 
