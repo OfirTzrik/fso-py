@@ -5,14 +5,19 @@ def header(course_name: str) -> rx.Component:
 		rx.el.h1(f"{course_name}"),
 	)
 
+def part(part_name: str, num_exercises: int) -> rx.Component:
+	return rx.fragment(
+		rx.el.p(f"{part_name} {num_exercises}")
+	)
+
 def content(parts: list, exercises: list) -> rx.Component:
 	part1, part2, part3 = parts
 	exercises1, exercises2, exercises3 = exercises
 
 	return rx.fragment(
-		rx.el.p(f"{part1} {exercises1}"),
-		rx.el.p(f"{part2} {exercises2}"),
-		rx.el.p(f"{part3} {exercises3}"),
+		part(part1, exercises1),
+		part(part2, exercises2),
+		part(part3, exercises3),
 	)
 
 def total(exercises: list) -> rx.Component:
