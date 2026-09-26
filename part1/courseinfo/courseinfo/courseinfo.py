@@ -7,12 +7,8 @@ def part(part_name: str, num_exercises: int) -> rx.Component:
 	return rx.el.p(f"{part_name} {num_exercises}")
 
 def content(parts_and_exercises: list[tuple[str, int]]) -> rx.Component:
-	p_e1, p_e2, p_e3 = parts_and_exercises
-
 	return rx.fragment(
-		part(p_e1[0], p_e1[1]),
-		part(p_e2[0], p_e2[1]),
-		part(p_e3[0], p_e3[1]),
+		*[part(p, e) for p, e in parts_and_exercises],
 	)
 
 def total(exercises: list[int]) -> rx.Component:
