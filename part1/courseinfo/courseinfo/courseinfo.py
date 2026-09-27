@@ -1,34 +1,56 @@
 import reflex as rx
+from typing import TypedDict
+
+# Part is a dictionary where name is str and exercises is int
+# Removes the vagueness of types
+class Part(TypedDict):
+	name: str
+	exercises: int
+
+# Course similar reasoning to Part
+class Course(TypedDict):
+	name: str
+	parts: list[Part]
 
 def header(course_name: str) -> rx.Component:
 	return rx.el.h1(f"{course_name}")
 
-def part(part_name: str, num_exercises: int) -> rx.Component:
-	return rx.el.p(f"{part_name} {num_exercises}")
+def part(p: Part) -> rx.Component:
+	return rx.el.p(f"{p["name"]} {p["exercises"]}")
 
-def content(parts_and_exercises: list[tuple[str, int]]) -> rx.Component:
+def content(parts: list[Part]) -> rx.Component:
 	return rx.fragment(
-		*[part(p, e) for p, e in parts_and_exercises],
+		*[part(p) for p in parts],
 	)
 
-def total(exercises: list[int]) -> rx.Component:
-	return rx.fragment(
-		rx.el.p(f"Number of exercises {sum(exercises)}")
-	)
+def total(parts: list[Part]) -> rx.Component:
+	exercises_list = [d["exercises"] for d in parts]
+	return rx.el.p(f"Number of exercises {sum(exercises_list)}")
 
 def index() -> rx.Component:
-	course = "Half stack application development"
-	part1 = "Fundamentals of Reflex"
-	exercises1 = 10
-	part2 = "Using arguments to pass data"
-	exercises2 = 7
-	part3 = "State of a component"
-	exercises3 = 14
+	course: Course = {
+		"name": "Half stack application development",
+		"parts": [
+			{
+				"name": "Fundamentals of Reflex",
+				"exercises": 10,
+			},
+			{
+				"name": "Using arguments to pass data",
+				"exercises": 7,
+			},
+			{
+				"name": "State of a component",
+				"exercises": 14,
+			},
+		]
+	}
+	
 
 	return rx.fragment(
-		header(course),
-		content([(part1, exercises1), (part2, exercises2), (part3, exercises3)]),
-		total([exercises1, exercises2, exercises3])
+		header(course["name"]),
+		content(course["parts"]),
+		total(course["parts"]),
 	)
 
 app = rx.App()
