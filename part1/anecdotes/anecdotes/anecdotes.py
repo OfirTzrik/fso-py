@@ -23,7 +23,6 @@ class AnecdoteState(rx.State):
 	@rx.event
 	def upvote(self):
 		self.votes[self.selected] += 1
-		print(f"{self.votes}")
 
 	# Getting the most voted for anecdote requires the operations 'index' and 'max'
 	# which don't work on Var so it needs to happen as computer var in the class
@@ -31,18 +30,26 @@ class AnecdoteState(rx.State):
 	def most_voted_idx(self) -> int:
 		return self.votes.index(max(self.votes))
 
+	@rx.var
+	def most_voted_anecdote(self) -> str:
+		return ANECDOTES[self.votes.index(max(self.votes))]
+
+	@rx.var
+	def selected_anecdote(self) -> str:
+		return ANECDOTES[self.selected]
+
 def index() -> rx.Component:
 	return rx.el.div(
 		# ANECDOTES is plain Python and expects an index, where AnecdoteState.selected
 		# is a Var, so turn ANECDOTES into a Var
 		rx.el.p("Anecdote of the day"),
-		rx.el.p(rx.Var.create(ANECDOTES)[AnecdoteState.selected]),
+		rx.el.p(AnecdoteState.selected_anecdote),
 		rx.el.p(f"has {AnecdoteState.votes[AnecdoteState.selected]} votes"),
 		rx.el.button("upvote", on_click=AnecdoteState.upvote),
 		rx.el.button("next anecdote", on_click=AnecdoteState.random_anecdote),
 		rx.el.br(),
 		rx.el.p("Anecdote with most votes"),
-		rx.el.p(f"{rx.Var.create(ANECDOTES)[AnecdoteState.most_voted_idx]}"),
+		rx.el.p(f"{AnecdoteState.most_voted_anecdote}"),
 		rx.el.p(f"has {AnecdoteState.votes[AnecdoteState.most_voted_idx]} votes"),
 	)
 
