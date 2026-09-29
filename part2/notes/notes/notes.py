@@ -1,30 +1,66 @@
 import reflex as rx
-from .components.note import Note, note
+import typing
+from random import random
+from .components.note import note
+from .models import Note
 
-NOTES: list[Note] = [
-	{
-		"id": 1,
-		"content": "HTML is easy",
-		"important": True,
-	},
-	{
-		"id": 2,
-		"content": "Browser can only execute only JavaScript",
-		"important": False,
-	},
-	{
-		"id": 3,
-		"content": "GET and POST are the most important methods of HTTP protocol",
-		"important": True,
-	},
-]
+class NoteState(rx.State):
+	notes: rx.Field[list[Note]] = rx.field(
+		[
+			Note(id=1, content="HTML is easy", important=True),
+			Note(id=2, content="Browser can execute only JavaScript", important=False),
+			Note(id=3, content="GET and POST are the most important methods of HTTP protocol", important=True),
+		]
+	)
+	new_note: rx.Field[str] = rx.field("a new note...")
+	show_all: rx.Field[bool] = rx.field(True)
+
+	# 'form_data' is unused but 'on_submit' still passes it
+	@rx.event
+	def add_note(self, form_data: dict[str, typing.Any]):
+		self.notes.append(
+			Note(
+				id=len(self.notes) + 1,
+				content=self.new_note,
+				important=random() < 0.5,
+			),
+		)
+		self.new_note = ""
+
+	# 'on_change' passes the input's current value as a string
+	# (here it is passed into the 'value' parameter)
+	@rx.event
+	def set_new_note(self, value: str):
+		self.new_note = value
+
+	@rx.event
+	def toggle_show_all(self):
+		self.show_all = not self.show_all
+
+	@rx.var
+	def notes_to_show(self) -> list[Note]:
+		if self.show_all:
+			return self.notes
+		return [n for n in self.notes if n.important]
 
 def index() -> rx.Component:
 	return rx.fragment(
 		rx.el.h1("Notes"),
-		rx.el.ul(
-			*[note(n) for n in NOTES],
+		rx.el.div(
+			rx.el.button(
+				"show ",
+				rx.cond(NoteState.show_all, "important", "all"),
+				on_click=NoteState.toggle_show_all,
+			),
 		),
+		rx.el.ul(
+			rx.foreach(NoteState.notes_to_show, note),
+		),
+		rx.el.form(
+			rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
+			rx.el.button("save", type="submit"),
+			on_submit=NoteState.add_note,
+		)
 	)
 
 app = rx.App()
