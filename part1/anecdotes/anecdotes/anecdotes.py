@@ -14,7 +14,7 @@ ANECDOTES = [
 
 class AnecdoteState(rx.State):
 	selected: rx.Field[int] = rx.field(0)
-	votes: rx.Field[list[int]] = rx.field([0 for i in range(len(ANECDOTES))])
+	votes: rx.Field[list[int]] = rx.field([0 for _ in range(len(ANECDOTES))])
 
 	@rx.event
 	def random_anecdote(self):
