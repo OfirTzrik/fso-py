@@ -1,16 +1,13 @@
 import typing
 import reflex as rx
+import httpx
+import asyncio
 from .models import Person
 
+BASE_URL = "http://localhost:3001/persons"
+
 class PhonebookState(rx.State):
-	persons: rx.Field[list[Person]] = rx.field(
-		[
-			Person(name="Spongebob Squarepants", number="123-456", id=1),
-			Person(name="Patrick Star", number="111-222", id=2),
-			Person(name="Squidward Tentacles", number="135-791", id=3),
-			Person(name="Eugene Krabs", number="246-802", id=4),
-		]
-	)
+	persons: rx.Field[list[Person]] = rx.field(default_factory=list)
 	new_name: rx.Field[str] = rx.field("")
 	new_number: rx.Field[str] = rx.field("")
 	filter_name: rx.Field[str] = rx.field("")
@@ -24,7 +21,7 @@ class PhonebookState(rx.State):
 		new_person = Person(
 			name=self.new_name,
 			number=self.new_number,
-			id=len(self.persons) + 1,
+			id=str(len(self.persons) + 1),
 		)
 
 		if new_person.name in [person.name for person in self.persons]:
@@ -45,6 +42,12 @@ class PhonebookState(rx.State):
 	@rx.event
 	def on_change_filter(self, value: str):
 		self.filter_name = value
+
+	@rx.event
+	async def load_people(self):
+		async with httpx.AsyncClient() as client:
+			response = await client.get(BASE_URL)
+		self.persons = [Person(**p) for p in response.json()]
 
 	@rx.var
 	def persons_to_show(self) -> list[Person]:

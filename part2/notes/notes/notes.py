@@ -1,17 +1,15 @@
 import reflex as rx
 import typing
+import httpx
+import asyncio
 from random import random
 from .components.note import note
 from .models import Note
 
+BASE_URL = "http://localhost:3001/notes"
+
 class NoteState(rx.State):
-	notes: rx.Field[list[Note]] = rx.field(
-		[
-			Note(id=1, content="HTML is easy", important=True),
-			Note(id=2, content="Browser can execute only JavaScript", important=False),
-			Note(id=3, content="GET and POST are the most important methods of HTTP protocol", important=True),
-		]
-	)
+	notes: rx.Field[list[Note]] = rx.field(default_factory=list)
 	new_note: rx.Field[str] = rx.field("a new note...")
 	show_all: rx.Field[bool] = rx.field(True)
 
@@ -20,7 +18,7 @@ class NoteState(rx.State):
 	def add_note(self, form_data: dict[str, typing.Any]):
 		self.notes.append(
 			Note(
-				id=len(self.notes) + 1,
+				id=str(len(self.notes) + 1),
 				content=self.new_note,
 				important=random() < 0.5,
 			),
@@ -36,6 +34,15 @@ class NoteState(rx.State):
 	@rx.event
 	def toggle_show_all(self):
 		self.show_all = not self.show_all
+
+	@rx.event
+	async def load_notes(self):
+		print("load_notes started")
+		async with httpx.AsyncClient() as client:
+			response = await client.get(BASE_URL)
+		print("response received:", response.status_code)
+		self.notes = [Note(**n) for n in response.json()]
+		print("loaded", len(self.notes), "notes")
 
 	@rx.var
 	def notes_to_show(self) -> list[Note]:
@@ -60,8 +67,8 @@ def index() -> rx.Component:
 			rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
 			rx.el.button("save", type="submit"),
 			on_submit=NoteState.add_note,
-		)
+		),
 	)
 
 app = rx.App()
-app.add_page(index)
+app.add_page(index, on_load=NoteState.load_notes)

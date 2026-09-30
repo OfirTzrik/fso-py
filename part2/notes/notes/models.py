@@ -2,6 +2,6 @@ from dataclasses import dataclass
 
 @dataclass
 class Note:
-	id: int
+	id: str
 	content: str
 	important: bool
