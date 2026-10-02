@@ -1,6 +1,5 @@
 import reflex as rx
 from .state import PhonebookState
-from .models import Person
 from .components.search_filter import search_filter
 from .components.form import form
 from .components.book_list import book_list

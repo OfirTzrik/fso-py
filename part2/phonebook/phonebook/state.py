@@ -1,7 +1,6 @@
 import typing
 import reflex as rx
 import httpx
-import asyncio
 from .models import Person
 
 BASE_URL = "http://localhost:3001/persons"
@@ -47,6 +46,7 @@ class PhonebookState(rx.State):
 	async def load_people(self):
 		async with httpx.AsyncClient() as client:
 			response = await client.get(BASE_URL)
+		response.raise_for_status()
 		self.persons = [Person(**p) for p in response.json()]
 
 	@rx.var
