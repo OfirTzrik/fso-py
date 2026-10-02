@@ -13,9 +13,9 @@ def index() -> rx.Component:
 			PhonebookState.on_change_name,
 			PhonebookState.new_number,
 			PhonebookState.on_change_number,
-			PhonebookState.on_submit
+			PhonebookState.on_submit,
 		),
-		book_list(PhonebookState.persons_to_show),
+		book_list(PhonebookState.persons_to_show, PhonebookState.ask_delete),
 	)
 
 app = rx.App()
