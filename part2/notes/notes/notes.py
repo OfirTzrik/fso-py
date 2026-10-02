@@ -1,12 +1,10 @@
 import reflex as rx
 import typing
 import httpx
-import asyncio
 from random import random
 from .components.note import note
 from .models import Note
-
-BASE_URL = "http://localhost:3001/notes"
+from .services import note_service
 
 class NoteState(rx.State):
 	notes: rx.Field[list[Note]] = rx.field(default_factory=list)
@@ -15,14 +13,9 @@ class NoteState(rx.State):
 
 	# 'form_data' is unused but 'on_submit' still passes it
 	@rx.event
-	def add_note(self, form_data: dict[str, typing.Any]):
-		self.notes.append(
-			Note(
-				id=str(len(self.notes) + 1),
-				content=self.new_note,
-				important=random() < 0.5,
-			),
-		)
+	async def add_note(self, form_data: dict[str, typing.Any]):
+		created = await note_service.create(content=self.new_note, important=random() < 0.5)
+		self.notes.append(created)
 		self.new_note = ""
 
 	# 'on_change' passes the input's current value as a string
@@ -37,12 +30,20 @@ class NoteState(rx.State):
 
 	@rx.event
 	async def load_notes(self):
-		print("load_notes started")
-		async with httpx.AsyncClient() as client:
-			response = await client.get(BASE_URL)
-		print("response received:", response.status_code)
-		self.notes = [Note(**n) for n in response.json()]
-		print("loaded", len(self.notes), "notes")
+		self.notes = await note_service.get_all()
+
+	# Toggle the importance of a note provided its id
+	@rx.event
+	async def toggle_importance(self, note_id: str):
+		note = next(n for n in self.notes if n.id == note_id)
+		try:
+			updated = await note_service.update_important(note_id, not note.important)
+		except httpx.HTTPStatusError as error:
+			if error.response.status_code == 404:
+				self.notes = [n for n in self.notes if n.id != note_id]
+				return rx.window_alert(f"the note '{note.content}' was already deleted from the server")
+			raise
+		self.notes = [updated if n.id == note_id else n for n in self.notes]
 
 	@rx.var
 	def notes_to_show(self) -> list[Note]:
@@ -61,7 +62,14 @@ def index() -> rx.Component:
 			),
 		),
 		rx.el.ul(
-			rx.foreach(NoteState.notes_to_show, note),
+			rx.foreach(
+				NoteState.notes_to_show,
+				# Connect the note element and the button on creation
+				# (both are created inside the note() function below)
+				# to use the toggle_importance function defined in
+				# NoteState
+				lambda n: note(n, NoteState.toggle_importance),
+			),
 		),
 		rx.el.form(
 			rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
