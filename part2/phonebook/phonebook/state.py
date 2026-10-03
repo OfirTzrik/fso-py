@@ -1,6 +1,8 @@
 import typing
 import reflex as rx
 import json
+import asyncio
+import httpx
 from .models import Person
 from .services import person_service
 
@@ -9,15 +11,29 @@ class PhonebookState(rx.State):
 	new_name: rx.Field[str] = rx.field("")
 	new_number: rx.Field[str] = rx.field("")
 	filter_name: rx.Field[str] = rx.field("")
+	notification_text: rx.Field[str] = rx.field("")
+	curr_class: rx.Field[str] = rx.field("success")
 
 	@rx.event
 	async def update_person_number(self, person_id: str, number: str, confirmed: bool):
 		if not confirmed:
 			return
-		updated = await person_service.update_number(person_id, number)
+		try:
+			updated = await person_service.update_number(person_id, number)
+		except httpx.HTTPStatusError as error:
+			person = next(p for p in self.persons if p.id == person_id)
+			if error.response.status_code == 404:
+				self.persons = [p for p in self.persons if p.id != person_id]
+				self.curr_class = "failure"
+				self.notification_text = f"Person '{person.name}' was already removed from the server"
+				return PhonebookState.clear_notification_after
+			raise
 		self.persons = [updated if p.id == person_id else p for p in self.persons]
+		self.curr_class = "success"
+		self.notification_text = f"Existing person '{updated.name}' was successfully updated"
 		self.new_name = ""
 		self.new_number = ""
+		return PhonebookState.clear_notification_after
 
 	# When submitting the form
 	@rx.event
@@ -39,8 +55,17 @@ class PhonebookState(rx.State):
 		# Make the change (update on server and then locally)
 		response = await person_service.create_person(self.new_name, self.new_number)
 		self.persons.append(response)
+		self.curr_class = "success"
+		self.notification_text = f"New person '{self.new_name}' was successfully added"
 		self.new_name = ""
 		self.new_number = ""
+		return PhonebookState.clear_notification_after
+
+	@rx.event(background=True)
+	async def clear_notification_after(self):
+		await asyncio.sleep(5)
+		async with self:
+			self.notification_text = ""
 
 	@rx.event
 	def on_change_name(self, value: str):
@@ -64,7 +89,15 @@ class PhonebookState(rx.State):
 		'''Runs after the confirm dialog closes; deletes on the server, then locally'''
 		if not confirmed:
 			return
-		await person_service.delete_person(person_id)
+		try:
+			response = await person_service.delete_person(person_id)
+		except httpx.HTTPStatusError as error:
+			person = next(p for p in self.persons if p.id == person_id)
+			if error.response.status_code == 404:
+				self.persons = [p for p in self.persons if p.id != person_id]
+				self.curr_class = "failure"
+				self.notification_text = f"Person '{person.name}' was already removed from the server"
+				return PhonebookState.clear_notification_after
 		self.persons = [p for p in self.persons if p.id != person_id]
 
 	@rx.event

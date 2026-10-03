@@ -1,8 +1,11 @@
 import reflex as rx
 import typing
 import httpx
+import asyncio
 from random import random
 from .components.note import note
+from .components.notification import notification
+from .components.footer import footer
 from .models import Note
 from .services import note_service
 
@@ -10,6 +13,7 @@ class NoteState(rx.State):
 	notes: rx.Field[list[Note]] = rx.field(default_factory=list)
 	new_note: rx.Field[str] = rx.field("a new note...")
 	show_all: rx.Field[bool] = rx.field(True)
+	error_message: rx.Field[str] = rx.field("")
 
 	# 'form_data' is unused but 'on_submit' still passes it
 	@rx.event
@@ -41,9 +45,16 @@ class NoteState(rx.State):
 		except httpx.HTTPStatusError as error:
 			if error.response.status_code == 404:
 				self.notes = [n for n in self.notes if n.id != note_id]
-				return rx.window_alert(f"the note '{note.content}' was already deleted from the server")
+				self.error_message = f"Note '{note.content}' was already removed from the server"
+				return NoteState.clear_error_later
 			raise
 		self.notes = [updated if n.id == note_id else n for n in self.notes]
+
+	@rx.event(background=True)
+	async def clear_error_later(self):
+		await asyncio.sleep(5)
+		async with self:
+			self.error_message = ""
 
 	@rx.var
 	def notes_to_show(self) -> list[Note]:
@@ -54,6 +65,7 @@ class NoteState(rx.State):
 def index() -> rx.Component:
 	return rx.fragment(
 		rx.el.h1("Notes"),
+		notification(NoteState.error_message),
 		rx.el.div(
 			rx.el.button(
 				"show ",
@@ -76,7 +88,8 @@ def index() -> rx.Component:
 			rx.el.button("save", type="submit"),
 			on_submit=NoteState.add_note,
 		),
+		footer()
 	)
 
-app = rx.App()
+app = rx.App(stylesheets=["/styles.css"])
 app.add_page(index, on_load=NoteState.load_notes)

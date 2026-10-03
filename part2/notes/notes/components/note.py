@@ -14,4 +14,5 @@ def note(data: rx.vars.ObjectVar[Note], toggle_importance) -> rx.Component:
 			on_click=lambda: toggle_importance(data.id)
 		),
 		key=data.id,
+		class_name="note",
 	)
