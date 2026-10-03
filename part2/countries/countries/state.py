@@ -21,8 +21,12 @@ class CountryState(rx.State):
 		'''Function to run whenever the filter-input's value is changing'''
 		self.name_filter = value
 		if len(self.list_filter) == 1:
-			self.selected = self.list_filter[0]
-			return CountryState.capital_weather()
+			match = self.list_filter[0]
+			# Same country as already shown: keep its weather, don't fetch again
+			if self.selected != match:
+				self.selected = match
+				self.weather = None
+				return CountryState.capital_weather()
 		else:
 			self.selected = None
 			self.weather = None
@@ -30,6 +34,7 @@ class CountryState(rx.State):
 	@rx.event
 	def show_country(self, country_name: str):
 		self.selected = next(c for c in self._all_countries if c.name == country_name)
+		self.weather = None
 		return CountryState.capital_weather()
 
 	@rx.event
