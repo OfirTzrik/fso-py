@@ -7,3 +7,9 @@ class Country:
 	area: float
 	languages: list[str]
 	flag: str
+
+@dataclass
+class Weather:
+	temp: float	
+	wind: float
+	icon: str

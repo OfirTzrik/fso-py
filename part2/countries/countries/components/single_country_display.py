@@ -15,15 +15,13 @@ def single_country_display(country: rx.vars.ObjectVar[Country]) -> rx.Component:
 			),
 		),
 		rx.el.p(f"Area in square kilometers: {country.area}"),
-		rx.el.ul(
-			rx.cond(
-				country.languages,
-				rx.el.div(
-					rx.el.p("Official languages:"),
-					rx.foreach(country.languages, rx.el.li),
-				),
-				"",
+		rx.cond(
+			country.languages,
+			rx.fragment(
+				rx.el.p("Official languages:"),
+				rx.el.ul(rx.foreach(country.languages, rx.el.li)),
 			),
 		),
+
 		rx.el.img(src=country.flag),
 	)
