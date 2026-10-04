@@ -84,7 +84,11 @@ def index() -> rx.Component:
 			),
 		),
 		rx.el.form(
-			rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
+			rx.debounce_input(
+				rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
+				force_notify_by_enter=True,
+				force_notify_on_blur=True,
+			),
 			rx.el.button("save", type="submit"),
 			on_submit=NoteState.add_note,
 		),
