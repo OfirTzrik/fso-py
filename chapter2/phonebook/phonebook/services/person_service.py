@@ -1,8 +1,10 @@
 import httpx
+import os
 
 from ..models import Person
 
-BASE_URL = "http://localhost:3001/persons"
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3001")
+BASE_URL = f"{BACKEND_URL}/api/persons"
 
 async def get_persons() -> list[Person]:
 	'''Get all persons from the server'''
