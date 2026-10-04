@@ -4,18 +4,26 @@ def form(name_var: rx.vars.StringVar[str], name_change_handler, number_var: rx.v
 	return rx.el.form(
 		rx.el.div(
 			"name: ",
-			rx.el.input(
-				value=name_var,
-				on_change=name_change_handler,
-				placeholder="New name here",
+			rx.debounce_input(
+				rx.el.input(
+					value=name_var,
+					on_change=name_change_handler,
+					placeholder="New name here",
+				),
+				force_notify_by_enter=True,
+				force_notify_on_blur=True,
 			),
 		),
 		rx.el.div(
 			"number: ",
-			rx.el.input(
-				value=number_var,
-				on_change=number_change_handler,
-				placeholder="New number here",
+			rx.debounce_input(
+				rx.el.input(
+					value=number_var,
+					on_change=number_change_handler,
+					placeholder="New number here",
+				),
+				force_notify_by_enter=True,
+				force_notify_on_blur=True,
 			),
 		),
 		rx.el.div(
