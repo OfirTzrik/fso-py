@@ -4,10 +4,12 @@ can do with Note objects (the services offered), other files
 and not provide them directly to keep things organized '''
 
 import httpx
+import os
 
 from ..models import Note
 
-BASE_URL = "http://localhost:3001/notes"
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3001")
+BASE_URL = f"{BACKEND_URL}/api/notes"
 
 # Get all notes
 async def get_all() -> list[Note]:
