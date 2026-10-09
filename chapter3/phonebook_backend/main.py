@@ -1,10 +1,11 @@
 import time
+import secrets
+import string
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from datetime import datetime
-from secrets import SystemRandom
 
 class Person(BaseModel):
 	id: str
@@ -47,8 +48,8 @@ def delete_person(id: str) -> None:
 	phonebook = [p for p in phonebook if p.id != id]
 
 def generate_id() -> str:
-	random_generator = SystemRandom()
-	return str(random_generator.randrange(start=0, stop=1000000))
+	alphabet = string.ascii_letters + string.digits
+	return str(''.join(secrets.choice(alphabet) for i in range(12)))
 
 @app.post("/api/persons", status_code=201)
 def create_person(person: CreatePerson) -> Person:
