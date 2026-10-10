@@ -2,63 +2,69 @@ import time
 import secrets
 import string
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi.responses import HTMLResponse, JSONResponse
 from datetime import datetime
+from sqlalchemy import select, func
+from sqlalchemy.orm import Session
+from sqlalchemy.exc import OperationalError
 
-class Person(BaseModel):
-	id: str
-	name: str
-	number: str
-
-class CreatePerson(BaseModel):
-	name: str = Field(min_length=1)
-	number: str = Field(min_length=1)
-
-phonebook: list[Person] = [
-	Person(id="1", name="Maren Holt", number="040-123456"),
-	Person(id="2", name="Idris Okafor", number="39-44-5323523"),
-	Person(id="3", name="Lena Vasquez", number="12-43-234345"),
-	Person(id="4", name="Tobias Rhee", number="39-23-6423122"),
-]
+from database import get_db
+from models import Person
+from schemas import PersonCreate, PersonUpdate, PersonOut
 
 app = FastAPI()
 
 @app.get("/api/persons")
-def get_persons() -> list[Person]:
-	return phonebook
+def get_persons(db: Session = Depends(get_db)) -> list[PersonOut]:
+	persons = db.scalars(select(Person)).all()
+	return [PersonOut.model_validate(person) for person in persons]
 
 @app.get("/info", response_class=HTMLResponse)
-def get_info() -> str:
+def get_info(db: Session = Depends(get_db)) -> str:
+	num_phonebook = db.query(func.count(Person.id)).scalar()
 	current = datetime.now()
-	return f"<p>Phonebook has info for {len(phonebook)} people</p>" \
+	return f"<p>Phonebook has info for {num_phonebook} people</p>" \
 		f"<p>{current}</p>"
 
 @app.get("/api/persons/{id}")
-def get_person(id: str) -> Person:
-	person = next((p for p in phonebook if p.id == id), None)
+def get_person(id: int, db: Session = Depends(get_db)) -> PersonOut:
+	person = db.get(Person, id)
 	if person is None:
 		raise HTTPException(status_code=404, detail="person not found")
-	return person
+	return PersonOut.model_validate(person)
 
 @app.delete("/api/persons/{id}", status_code=204)
-def delete_person(id: str) -> None:
-	global phonebook
-	phonebook = [p for p in phonebook if p.id != id]
-
-def generate_id() -> str:
-	alphabet = string.ascii_letters + string.digits
-	return str(''.join(secrets.choice(alphabet) for i in range(12)))
+def delete_person(id: int, db: Session = Depends(get_db)) -> None:
+	person = db.get(Person, id)
+	if person is not None:
+		db.delete(person)
+		db.commit()
 
 @app.post("/api/persons", status_code=201)
-def create_person(person: CreatePerson) -> Person:
-	new_person = Person(id=generate_id(), name=person.name, number=person.number)
-	dup = [p.name for p in phonebook if p.name == new_person.name]
+def create_person(person: PersonCreate, db: Session = Depends(get_db)) -> PersonOut:
+	persons = db.scalars(select(Person)).all()
+	new_person = Person(name=person.name, number=person.number)
+	dup = [p.name for p in persons if p.name == new_person.name]
 	if dup:
 		raise HTTPException(status_code=400, detail="name must be unique")
-	phonebook.append(new_person)
-	return new_person
+	db.add(new_person)
+	db.commit()
+	db.refresh(new_person)
+	return PersonOut.model_validate(new_person)
+
+@app.patch("/api/persons/{id}")
+def update_person(id: int, updated_person: PersonUpdate, db: Session = Depends(get_db)) -> PersonOut:
+	person = db.get(Person, id)
+	if person is None:
+		raise HTTPException(status_code=404, detail="person not found")
+	if person.number == None:
+		raise HTTPException(status_code=422, detail="number is missing")
+	for field, value in updated_person.model_dump(exclude_unset=True).items():
+		setattr(person, field, value)
+	db.commit()
+	db.refresh(person)
+	return PersonOut.model_validate(person)
 
 @app.middleware("http")
 async def log_request(request: Request, call_next):
@@ -75,3 +81,8 @@ async def log_request(request: Request, call_next):
 	else:
 		print(request.method, request.url.path, response.status_code, f"{ms:.1f} ms")
 	return response
+
+@app.exception_handler(OperationalError)
+def database_unavailable(request, exc):
+	print("database error", exc.orig)
+	return JSONResponse(status_code=503, content={"detail": "database unavailable"})

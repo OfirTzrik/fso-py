@@ -4,4 +4,4 @@ from dataclasses import dataclass
 class Person:
 	name: str
 	number: str
-	id: str
+	id: int

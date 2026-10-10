@@ -15,7 +15,7 @@ class PhonebookState(rx.State):
 	curr_class: rx.Field[str] = rx.field("success")
 
 	@rx.event
-	async def update_person_number(self, person_id: str, number: str, confirmed: bool):
+	async def update_person_number(self, person_id: int, number: str, confirmed: bool):
 		if not confirmed:
 			return
 		try:
@@ -85,7 +85,7 @@ class PhonebookState(rx.State):
 		self.persons = await person_service.get_persons()
 
 	@rx.event
-	async def delete_person(self, person_id: str, confirmed: bool):
+	async def delete_person(self, person_id: int, confirmed: bool):
 		'''Runs after the confirm dialog closes; deletes on the server, then locally'''
 		if not confirmed:
 			return
@@ -101,7 +101,7 @@ class PhonebookState(rx.State):
 		self.persons = [p for p in self.persons if p.id != person_id]
 
 	@rx.event
-	def ask_delete(self, person_id: str):
+	def ask_delete(self, person_id: int):
 		'''Ask the user to confirm before deleting'''
 		person = next(p for p in self.persons if p.id == person_id)
 		message = f"Delete {person.name}?"

@@ -20,13 +20,13 @@ async def create_person(name: str, number: str) -> Person:
 	response.raise_for_status()
 	return Person(**response.json())
 
-async def delete_person(person_id: str) -> None:
+async def delete_person(person_id: int) -> None:
 	'''Delete a person on the server'''
 	async with httpx.AsyncClient() as client:
 		response = await client.delete(f"{BASE_URL}/{person_id}")
 	response.raise_for_status()
 
-async def update_number(person_id: str, number: str) -> Person:
+async def update_number(person_id: int, number: str) -> Person:
 	async with httpx.AsyncClient() as client:
 		response = await client.patch(f"{BASE_URL}/{person_id}", json={"number": number})
 	response.raise_for_status()
