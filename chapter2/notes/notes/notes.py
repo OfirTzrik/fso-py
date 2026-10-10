@@ -38,7 +38,7 @@ class NoteState(rx.State):
 
 	# Toggle the importance of a note provided its id
 	@rx.event
-	async def toggle_importance(self, note_id: str):
+	async def toggle_importance(self, note_id: int):
 		note = next(n for n in self.notes if n.id == note_id)
 		try:
 			updated = await note_service.update_important(note_id, not note.important)
