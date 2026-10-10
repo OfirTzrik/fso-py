@@ -1,6 +1,4 @@
 import time
-import secrets
-import string
 
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -9,9 +7,11 @@ from sqlalchemy import select, func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import OperationalError
 
-from database import get_db
+from database import get_db, Base, engine
 from models import Person
 from schemas import PersonCreate, PersonUpdate, PersonOut
+
+Base.metadata.create_all(engine)
 
 app = FastAPI()
 
@@ -22,7 +22,7 @@ def get_persons(db: Session = Depends(get_db)) -> list[PersonOut]:
 
 @app.get("/info", response_class=HTMLResponse)
 def get_info(db: Session = Depends(get_db)) -> str:
-	num_phonebook = db.query(func.count(Person.id)).scalar()
+	num_phonebook = db.scalar(select(func.count()).select_from(Person))
 	current = datetime.now()
 	return f"<p>Phonebook has info for {num_phonebook} people</p>" \
 		f"<p>{current}</p>"
@@ -43,10 +43,9 @@ def delete_person(id: int, db: Session = Depends(get_db)) -> None:
 
 @app.post("/api/persons", status_code=201)
 def create_person(person: PersonCreate, db: Session = Depends(get_db)) -> PersonOut:
-	persons = db.scalars(select(Person)).all()
 	new_person = Person(name=person.name, number=person.number)
-	dup = [p.name for p in persons if p.name == new_person.name]
-	if dup:
+	dup = db.scalar(select(Person).where(Person.name == person.name))
+	if dup is not None:
 		raise HTTPException(status_code=400, detail="name must be unique")
 	db.add(new_person)
 	db.commit()
@@ -58,8 +57,6 @@ def update_person(id: int, updated_person: PersonUpdate, db: Session = Depends(g
 	person = db.get(Person, id)
 	if person is None:
 		raise HTTPException(status_code=404, detail="person not found")
-	if person.number == None:
-		raise HTTPException(status_code=422, detail="number is missing")
 	for field, value in updated_person.model_dump(exclude_unset=True).items():
 		setattr(person, field, value)
 	db.commit()

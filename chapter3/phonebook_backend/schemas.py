@@ -5,7 +5,6 @@ class PersonCreate(BaseModel):
 	number: str = Field(min_length=1)
 
 class PersonUpdate(BaseModel):
-	name: str | None = Field(min_length=1)
 	number: str | None = Field(min_length=1)
 
 class PersonOut(BaseModel):
