@@ -5,7 +5,7 @@ class PersonCreate(BaseModel):
 	number: str = Field(min_length=1)
 
 class PersonUpdate(BaseModel):
-	number: str | None = Field(min_length=1)
+	number: str = Field(min_length=1)
 
 class PersonOut(BaseModel):
 	model_config = ConfigDict(from_attributes=True)
