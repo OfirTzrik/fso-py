@@ -1,15 +1,10 @@
 # fso-py
-**<h2>Full stack open but Python</h2>**
 
-**<u>Notes:</u>**
+[Full Stack Open](https://fullstackopen.com/) but in Python.
 
-Frontend: https://notes-frontend-6rjk.onrender.com/
+## Projects
 
-Backend: https://notes-backend-khme.onrender.com/docs
-
-
-**<u>Phonebook:</u>**
-
-Frontend: https://phonebook-frontend-yagb.onrender.com/
-
-Backend: https://phonebook-backend-iw9k.onrender.com/docs
+| Project   | Frontend                                              | Backend (API docs)                                        |
+| --------- | ----------------------------------------------------- | --------------------------------------------------------- |
+| Notes     | [Open](https://notes-frontend-6rjk.onrender.com/)     | [Open](https://notes-backend-khme.onrender.com/docs)      |
+| Phonebook | [Open](https://phonebook-frontend-yagb.onrender.com/) | [Open](https://phonebook-backend-iw9k.onrender.com/docs)  |
