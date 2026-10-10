@@ -26,7 +26,7 @@ async def create(content: str, important: bool) -> Note:
 	return Note(**response.json())
 
 # Update the 'important' field of a specific note
-async def update_important(note_id: str, important: bool) -> Note:
+async def update_important(note_id: int, important: bool) -> Note:
 	async with httpx.AsyncClient() as client:
 		response = await client.patch(f"{BASE_URL}/{note_id}", json={"important": important})
 	response.raise_for_status()
