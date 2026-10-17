@@ -67,7 +67,9 @@ def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)) -
 	note = db.get(Note, note_id)
 	if note is None:
 		raise HTTPException(status_code=404, detail="note not found")
-	for field, value in data.model_dump(exclude_unset=True).items():
+	# exclude_unset drops fields the cliends didn't send
+	# exclude_none drops fields the client sent as null
+	for field, value in data.model_dump(exclude_unset=True, exclude_none=True).items():
 		setattr(note, field, value)
 	db.commit()
 	db.refresh(note)

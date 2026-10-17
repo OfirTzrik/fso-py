@@ -31,3 +31,12 @@ async def update_important(note_id: int, important: bool) -> Note:
 		response = await client.patch(f"{BASE_URL}/{note_id}", json={"important": important})
 	response.raise_for_status()
 	return Note(**response.json())
+
+def error_detail(error: httpx.HTTPStatusError) -> str:
+	'''Turn the error body sent by the backend into on readable message'''
+	detail = error.response.json()["detail"]
+	# If it is a string then it is 400 or 404, return as is
+	if isinstance(detail, str):
+		return detail
+	# Otherwise it is a 422 list
+	return "; ".join(e["msg"].removeprefix("Value error, ") for e in detail)

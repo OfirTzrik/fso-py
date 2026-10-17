@@ -18,7 +18,12 @@ class NoteState(rx.State):
 	# 'form_data' is unused but 'on_submit' still passes it
 	@rx.event
 	async def add_note(self, form_data: dict[str, typing.Any]):
-		created = await note_service.create(content=self.new_note, important=random() < 0.5)
+		try:
+			created = await note_service.create(content=self.new_note, important=random() < 0.5)
+		except httpx.HTTPStatusError as error:
+			if error.response.status_code in (400, 422):
+				self.error_message = note_service.error_detail(error)
+				return NoteState.clear_error_later
 		self.notes.append(created)
 		self.new_note = ""
 
