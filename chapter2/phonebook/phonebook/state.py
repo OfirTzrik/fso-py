@@ -106,7 +106,7 @@ class PhonebookState(rx.State):
 		if not confirmed:
 			return
 		try:
-			response = await person_service.delete_person(person_id)
+			await person_service.delete_person(person_id)
 		except httpx.HTTPStatusError as error:
 			person = next(p for p in self.persons if p.id == person_id)
 			if error.response.status_code == 404:
@@ -116,6 +116,7 @@ class PhonebookState(rx.State):
 					f"Person '{person.name}' was already removed from the server"
 				)
 				return PhonebookState.clear_notification_after
+			raise
 		self.persons = [p for p in self.persons if p.id != person_id]
 
 	@rx.event

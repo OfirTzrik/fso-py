@@ -40,7 +40,7 @@ class NoteUpdate(BaseModel):
 
 	# | None mean the field can be null and default=None makes
 	# the field optional.
-	content: str | None = Field(default=None, min_length=1, max_length=200)
+	content: str | None = Field(default=None, min_length=5, max_length=200)
 	important: bool | None = None
 
 	@field_validator("content")
