@@ -1,6 +1,7 @@
 import reflex as rx
 from decimal import Decimal
 
+
 class FeedbackState(rx.State):
 	good: rx.Field[int] = rx.field(0)
 	neutral: rx.Field[int] = rx.field(0)
@@ -36,13 +37,18 @@ class FeedbackState(rx.State):
 			return 0.0
 		return (self.good / (self.good + self.neutral + self.bad)) * 100.0
 
+
 def heading(text: str) -> rx.Component:
 	return rx.el.h1(f"{text}")
+
 
 def button(text: str, handler) -> rx.Component:
 	return rx.el.button(text, on_click=handler)
 
-def stat(text: str, val: rx.vars.NumberVar[int | float | Decimal], is_percent: bool) -> rx.Component:
+
+def stat(
+	text: str, val: rx.vars.NumberVar[int | float | Decimal], is_percent: bool
+) -> rx.Component:
 	if not is_percent:
 		return rx.el.tr(
 			rx.el.td(text),
@@ -52,6 +58,7 @@ def stat(text: str, val: rx.vars.NumberVar[int | float | Decimal], is_percent: b
 		rx.el.td(text),
 		rx.el.td(f"{val} %"),
 	)
+
 
 def statistics() -> rx.Component:
 	return rx.el.table(
@@ -65,9 +72,12 @@ def statistics() -> rx.Component:
 		)
 	)
 
+
 def index() -> rx.Component:
 	# Regular int when in the class, NumberVar outside
-	total: rx.vars.NumberVar[int | float | Decimal] = FeedbackState.good + FeedbackState.neutral + FeedbackState.bad
+	total: rx.vars.NumberVar[int | float | Decimal] = (
+		FeedbackState.good + FeedbackState.neutral + FeedbackState.bad
+	)
 
 	return rx.cond(
 		total == 0,
@@ -88,6 +98,7 @@ def index() -> rx.Component:
 			statistics(),
 		),
 	)
+
 
 app = rx.App()
 app.add_page(index)

@@ -14,45 +14,50 @@ Base.metadata.create_all(engine)
 
 app = FastAPI()
 
+
 @app.get("/", response_class=HTMLResponse)
 def root() -> str:
-	'''Handle get requests to the root of the website, sending
-	HTML to be rendered instead of the usual JSON.'''
+	"""Handle get requests to the root of the website, sending
+	HTML to be rendered instead of the usual JSON."""
 	return "<h1>Hello World!</h1>"
+
 
 # db: Session = Depends(get_db) means that this route needs a db
 # to work and it can get it by calling get_db (which yields to give
 # back control toe this function)
 @app.get("/api/notes")
 def get_notes(db: Session = Depends(get_db)) -> list[NoteOut]:
-	'''Get a list of all Note objects. FastAPI sends it as a JSON.'''
+	"""Get a list of all Note objects. FastAPI sends it as a JSON."""
 	notes = db.scalars(select(Note)).all()
 	# Return all notes after validating the structure of each one
 	return [NoteOut.model_validate(n) for n in notes]
 
+
 @app.get("/api/notes/{note_id}")
 def get_note(note_id: int, db: Session = Depends(get_db)) -> NoteOut:
-	'''Get the note with the requested id and return it.
-	If it was not found (None) return the 404 status code.'''
+	"""Get the note with the requested id and return it.
+	If it was not found (None) return the 404 status code."""
 	note = db.get(Note, note_id)
 	if note is None:
 		raise HTTPException(status_code=404, detail="note not found")
 	return NoteOut.model_validate(note)
 
+
 @app.delete("/api/notes/{note_id}", status_code=204)
 def delete_note(note_id: int, db: Session = Depends(get_db)) -> None:
-	'''Delete a note with id by updating the global list of
+	"""Delete a note with id by updating the global list of
 	notes without including it and respond with an empty
-	response body (code 204).'''
+	response body (code 204)."""
 	note = db.get(Note, note_id)
 	if note is not None:
 		db.delete(note)
 		db.commit()
 
+
 @app.post("/api/notes", status_code=201)
 def create_note(data: NoteCreate, db: Session = Depends(get_db)) -> NoteOut:
-	'''Add a new note based on what the user provided and
-	report it was created (code 201)'''
+	"""Add a new note based on what the user provided and
+	report it was created (code 201)"""
 	note = Note(content=data.content, important=data.important)
 	# Add a new note to the database and register the changes
 	db.add(note)
@@ -62,8 +67,10 @@ def create_note(data: NoteCreate, db: Session = Depends(get_db)) -> NoteOut:
 	db.refresh(note)
 	return NoteOut.model_validate(note)
 
+
 @app.patch("/api/notes/{note_id}")
 def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)) -> NoteOut:
+	"""Update only the specified fields of a note"""
 	note = db.get(Note, note_id)
 	if note is None:
 		raise HTTPException(status_code=404, detail="note not found")
@@ -73,7 +80,12 @@ def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)) -
 		setattr(note, field, value)
 	db.commit()
 	db.refresh(note)
+
+	# db.get gave us a Note object, while Pydantic's model_validate
+	# knows how to read dicts, so NoteOut's from_attributes tells
+	# Pydantic to read it like an object instead.
 	return NoteOut.model_validate(note)
+
 
 # A "middleware" is a function that works with every request
 # before it is processed by any specific path operation. And also
@@ -82,7 +94,7 @@ def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)) -
 # such as logging, timing, etc.
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-	'''Log the request and response time'''
+	"""Log the request and response time"""
 	start = time.perf_counter()
 	# Code before runs before the matching route
 	response = await call_next(request)
@@ -90,6 +102,7 @@ async def log_requests(request: Request, call_next):
 	ms = (time.perf_counter() - start) * 1000
 	print(request.method, request.url.path, response.status_code, f"{ms:.1f} ms")
 	return response
+
 
 # OperationalError is raised whenever SQLAlchemy can't reach the
 # database or the connection break

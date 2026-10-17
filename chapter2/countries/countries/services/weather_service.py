@@ -6,9 +6,12 @@ from ..models import Weather
 API_KEY = os.environ["WEATHER_API_KEY"]
 WEATHER_URL = "https://api.openweathermap.org/data/2.5/weather"
 
+
 async def get_weather_capital(capital_city: str) -> Weather:
 	async with httpx.AsyncClient() as client:
-		response = await client.get(WEATHER_URL, params={"q": capital_city, "appid": API_KEY, "units": "metric"})
+		response = await client.get(
+			WEATHER_URL, params={"q": capital_city, "appid": API_KEY, "units": "metric"}
+		)
 	response.raise_for_status()
 	data = response.json()
 	return Weather(

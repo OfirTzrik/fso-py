@@ -1,5 +1,6 @@
 import reflex as rx
 
+
 def search_filter(filter_var: rx.vars.StringVar[str], filter_handler) -> rx.Component:
 	return rx.el.div(
 		"filter shown with: ",

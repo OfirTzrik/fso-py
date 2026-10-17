@@ -2,7 +2,10 @@ import reflex as rx
 
 from ..models import Country
 
-def multiple_country_display(computed_var: rx.vars.ArrayVar[list[Country]], show_country_handler) -> rx.Component:
+
+def multiple_country_display(
+	computed_var: rx.vars.ArrayVar[list[Country]], show_country_handler
+) -> rx.Component:
 	return rx.el.div(
 		rx.cond(
 			computed_var.length() > 10,

@@ -2,9 +2,10 @@ import reflex as rx
 
 from ..models import Country
 
+
 def single_country_display(country: rx.vars.ObjectVar[Country]) -> rx.Component:
-	'''Display a single country's details since the filter is now specific
-	enough to show a single country's details'''
+	"""Display a single country's details since the filter is now specific
+	enough to show a single country's details"""
 	return rx.el.div(
 		rx.el.p(f"Name: {country.name}"),
 		rx.el.p(
@@ -22,6 +23,5 @@ def single_country_display(country: rx.vars.ObjectVar[Country]) -> rx.Component:
 				rx.el.ul(rx.foreach(country.languages, rx.el.li)),
 			),
 		),
-
 		rx.el.img(src=country.flag),
 	)

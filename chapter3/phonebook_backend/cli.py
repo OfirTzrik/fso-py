@@ -1,5 +1,5 @@
-'''Add new entries and view existing entries using the cli
-usage: python3 cli.py "<name>" <number>'''
+"""Add new entries and view existing entries using the cli
+usage: python3 cli.py "<name>" <number>"""
 
 import sys
 from sqlalchemy import select
@@ -27,4 +27,4 @@ with SessionLocal() as db:
 		print(f"added {name} number {number} to phonebook")
 	# Bad number of command line arguments
 	else:
-		print("usage: python3 cli.py \"<name>\" <number>")
+		print('usage: python3 cli.py "<name>" <number>')

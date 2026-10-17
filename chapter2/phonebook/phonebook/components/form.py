@@ -1,6 +1,13 @@
 import reflex as rx
 
-def form(name_var: rx.vars.StringVar[str], name_change_handler, number_var: rx.vars.StringVar[str], number_change_handler, submit_handler) -> rx.Component:
+
+def form(
+	name_var: rx.vars.StringVar[str],
+	name_change_handler,
+	number_var: rx.vars.StringVar[str],
+	number_change_handler,
+	submit_handler,
+) -> rx.Component:
 	return rx.el.form(
 		rx.el.div(
 			"name: ",

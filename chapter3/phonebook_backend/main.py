@@ -15,17 +15,19 @@ Base.metadata.create_all(engine)
 
 app = FastAPI()
 
+
 @app.get("/api/persons")
 def get_persons(db: Session = Depends(get_db)) -> list[PersonOut]:
 	persons = db.scalars(select(Person)).all()
 	return [PersonOut.model_validate(person) for person in persons]
 
+
 @app.get("/info", response_class=HTMLResponse)
 def get_info(db: Session = Depends(get_db)) -> str:
 	num_phonebook = db.scalar(select(func.count()).select_from(Person))
 	current = datetime.now()
-	return f"<p>Phonebook has info for {num_phonebook} people</p>" \
-		f"<p>{current}</p>"
+	return f"<p>Phonebook has info for {num_phonebook} people</p><p>{current}</p>"
+
 
 @app.get("/api/persons/{id}")
 def get_person(id: int, db: Session = Depends(get_db)) -> PersonOut:
@@ -34,12 +36,14 @@ def get_person(id: int, db: Session = Depends(get_db)) -> PersonOut:
 		raise HTTPException(status_code=404, detail="person not found")
 	return PersonOut.model_validate(person)
 
+
 @app.delete("/api/persons/{id}", status_code=204)
 def delete_person(id: int, db: Session = Depends(get_db)) -> None:
 	person = db.get(Person, id)
 	if person is not None:
 		db.delete(person)
 		db.commit()
+
 
 @app.post("/api/persons", status_code=201)
 def create_person(person: PersonCreate, db: Session = Depends(get_db)) -> PersonOut:
@@ -52,8 +56,11 @@ def create_person(person: PersonCreate, db: Session = Depends(get_db)) -> Person
 	db.refresh(new_person)
 	return PersonOut.model_validate(new_person)
 
+
 @app.patch("/api/persons/{id}")
-def update_person(id: int, updated_person: PersonUpdate, db: Session = Depends(get_db)) -> PersonOut:
+def update_person(
+	id: int, updated_person: PersonUpdate, db: Session = Depends(get_db)
+) -> PersonOut:
 	person = db.get(Person, id)
 	if person is None:
 		raise HTTPException(status_code=404, detail="person not found")
@@ -62,6 +69,7 @@ def update_person(id: int, updated_person: PersonUpdate, db: Session = Depends(g
 	db.commit()
 	db.refresh(person)
 	return PersonOut.model_validate(person)
+
 
 @app.middleware("http")
 async def log_request(request: Request, call_next):
@@ -78,6 +86,7 @@ async def log_request(request: Request, call_next):
 	else:
 		print(request.method, request.url.path, response.status_code, f"{ms:.1f} ms")
 	return response
+
 
 @app.exception_handler(OperationalError)
 def database_unavailable(request, exc):

@@ -9,6 +9,7 @@ from .components.footer import footer
 from .models import Note
 from .services import note_service
 
+
 class NoteState(rx.State):
 	notes: rx.Field[list[Note]] = rx.field(default_factory=list)
 	new_note: rx.Field[str] = rx.field("a new note...")
@@ -24,6 +25,7 @@ class NoteState(rx.State):
 			if error.response.status_code in (400, 422):
 				self.error_message = note_service.error_detail(error)
 				return NoteState.clear_error_later
+			raise
 		self.notes.append(created)
 		self.new_note = ""
 
@@ -67,6 +69,7 @@ class NoteState(rx.State):
 			return self.notes
 		return [n for n in self.notes if n.important]
 
+
 def index() -> rx.Component:
 	return rx.fragment(
 		rx.el.h1("Notes"),
@@ -97,8 +100,9 @@ def index() -> rx.Component:
 			rx.el.button("save", type="submit"),
 			on_submit=NoteState.add_note,
 		),
-		footer()
+		footer(),
 	)
+
 
 app = rx.App(stylesheets=["/styles.css"])
 app.add_page(index, on_load=NoteState.load_notes)

@@ -1,5 +1,6 @@
 import reflex as rx
 
+
 def country_filter(country_name: rx.Var[str], country_filter_handler) -> rx.Component:
 	return rx.el.div(
 		"Filter countries: ",

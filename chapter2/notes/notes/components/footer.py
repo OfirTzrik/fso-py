@@ -1,5 +1,6 @@
 import reflex as rx
 
+
 def footer() -> rx.Component:
 	return rx.el.div(
 		rx.el.br(),

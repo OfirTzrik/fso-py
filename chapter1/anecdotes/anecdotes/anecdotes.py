@@ -12,6 +12,7 @@ ANECDOTES = [
 	"The only way to go fast, is to go well.",
 ]
 
+
 class AnecdoteState(rx.State):
 	selected: rx.Field[int] = rx.field(0)
 	votes: rx.Field[list[int]] = rx.field([0 for _ in range(len(ANECDOTES))])
@@ -38,6 +39,7 @@ class AnecdoteState(rx.State):
 	def selected_anecdote(self) -> str:
 		return ANECDOTES[self.selected]
 
+
 def index() -> rx.Component:
 	return rx.el.div(
 		# ANECDOTES is plain Python and expects an index, where AnecdoteState.selected
@@ -52,6 +54,7 @@ def index() -> rx.Component:
 		rx.el.p(f"{AnecdoteState.most_voted_anecdote}"),
 		rx.el.p(f"has {AnecdoteState.votes[AnecdoteState.most_voted_idx]} votes"),
 	)
+
 
 app = rx.App()
 app.add_page(index)

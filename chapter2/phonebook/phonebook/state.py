@@ -6,6 +6,7 @@ import httpx
 from .models import Person
 from .services import person_service
 
+
 class PhonebookState(rx.State):
 	persons: rx.Field[list[Person]] = rx.field(default_factory=list)
 	new_name: rx.Field[str] = rx.field("")
@@ -25,7 +26,13 @@ class PhonebookState(rx.State):
 			if error.response.status_code == 404:
 				self.persons = [p for p in self.persons if p.id != person_id]
 				self.curr_class = "failure"
-				self.notification_text = f"Person '{person.name}' was already removed from the server"
+				self.notification_text = (
+					f"Person '{person.name}' was already removed from the server"
+				)
+				return PhonebookState.clear_notification_after
+			if error.response.status_code in (400, 422):
+				self.notification_text = person_service.error_detail(error)
+				self.curr_class = "failure"
 				return PhonebookState.clear_notification_after
 			raise
 		self.persons = [updated if p.id == person_id else p for p in self.persons]
@@ -38,7 +45,7 @@ class PhonebookState(rx.State):
 	# When submitting the form
 	@rx.event
 	async def on_submit(self, form_data: dict[str, typing.Any]):
-		'''Make the necessary checks before adding a new person to the list'''
+		"""Make the necessary checks before adding a new person to the list"""
 		# Check missing information
 		if not self.new_name or not self.new_number:
 			return rx.window_alert(f"Missing name and / or number")
@@ -49,11 +56,20 @@ class PhonebookState(rx.State):
 			message = f"{existing.name} is already added to phonebook, replace the old number with a new one?"
 			return rx.call_script(
 				f"window.confirm({json.dumps(message)})",
-				callback=lambda result: PhonebookState.update_person_number(existing.id, self.new_number, result),
+				callback=lambda result: PhonebookState.update_person_number(
+					existing.id, self.new_number, result
+				),
 			)
 
 		# Make the change (update on server and then locally)
-		response = await person_service.create_person(self.new_name, self.new_number)
+		try:
+			response = await person_service.create_person(self.new_name, self.new_number)
+		except httpx.HTTPStatusError as error:
+			if error.response.status_code in (400, 422):
+				self.notification_text = person_service.error_detail(error)
+				self.curr_class = "failure"
+				return PhonebookState.clear_notification_after
+			raise
 		self.persons.append(response)
 		self.curr_class = "success"
 		self.notification_text = f"New person '{self.new_name}' was successfully added"
@@ -81,12 +97,12 @@ class PhonebookState(rx.State):
 
 	@rx.event
 	async def load_people(self):
-		'''Get the list of persons from the server and update the local list'''
+		"""Get the list of persons from the server and update the local list"""
 		self.persons = await person_service.get_persons()
 
 	@rx.event
 	async def delete_person(self, person_id: int, confirmed: bool):
-		'''Runs after the confirm dialog closes; deletes on the server, then locally'''
+		"""Runs after the confirm dialog closes; deletes on the server, then locally"""
 		if not confirmed:
 			return
 		try:
@@ -96,13 +112,15 @@ class PhonebookState(rx.State):
 			if error.response.status_code == 404:
 				self.persons = [p for p in self.persons if p.id != person_id]
 				self.curr_class = "failure"
-				self.notification_text = f"Person '{person.name}' was already removed from the server"
+				self.notification_text = (
+					f"Person '{person.name}' was already removed from the server"
+				)
 				return PhonebookState.clear_notification_after
 		self.persons = [p for p in self.persons if p.id != person_id]
 
 	@rx.event
 	def ask_delete(self, person_id: int):
-		'''Ask the user to confirm before deleting'''
+		"""Ask the user to confirm before deleting"""
 		person = next(p for p in self.persons if p.id == person_id)
 		message = f"Delete {person.name}?"
 		return rx.call_script(
@@ -112,6 +130,8 @@ class PhonebookState(rx.State):
 
 	@rx.var
 	def persons_to_show(self) -> list[Person]:
-		'''Choose which persons to show based on name filtering'''
-		filtered = list(filter(lambda person: self.filter_name.lower() in person.name.lower(), self.persons))
+		"""Choose which persons to show based on name filtering"""
+		filtered = list(
+			filter(lambda person: self.filter_name.lower() in person.name.lower(), self.persons)
+		)
 		return filtered

@@ -1,6 +1,7 @@
 import reflex as rx
 from collections.abc import Sequence
 
+
 class ClickState(rx.State):
 	left: rx.Field[int] = rx.field(0)
 	right: rx.Field[int] = rx.field(0)
@@ -20,6 +21,7 @@ class ClickState(rx.State):
 	def total(self) -> int:
 		return self.left + self.right
 
+
 # Reflex describes list Vars with the wider type (Sequence) and not with 'list'
 # PyLance expects rx.vars.ArrayVar[Sequence[str]] and not rx.vars.ArrayVar[list[str]]
 def history(all_clicks: rx.vars.ArrayVar[Sequence[str]]) -> rx.Component:
@@ -29,8 +31,10 @@ def history(all_clicks: rx.vars.ArrayVar[Sequence[str]]) -> rx.Component:
 		rx.el.div("button press history: ", all_clicks.join(" ")),
 	)
 
+
 def button(on_click, text: str) -> rx.Component:
 	return rx.el.button(text, on_click=on_click)
+
 
 def index() -> rx.Component:
 	return rx.el.div(
@@ -40,8 +44,9 @@ def index() -> rx.Component:
 		rx.el.button("right", on_click=ClickState.click_right),
 		ClickState.right,
 		history(ClickState.all_clicks),
-		rx.el.p(f"total is {ClickState.total}")
+		rx.el.p(f"total is {ClickState.total}"),
 	)
+
 
 app = rx.App()
 app.add_page(index)

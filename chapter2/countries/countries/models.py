@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+
 @dataclass
 class Country:
 	name: str
@@ -8,8 +9,9 @@ class Country:
 	languages: list[str]
 	flag: str
 
+
 @dataclass
 class Weather:
-	temp: float	
+	temp: float
 	wind: float
 	icon: str
