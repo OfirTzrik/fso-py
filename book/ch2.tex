@@ -1,0 +1,809 @@
+\chapter{Communicating with a server}
+
+\textbf{Sections:} a. Rendering a collection, modules $\cdot$ b. Forms $\cdot$ c. Getting data from a server $\cdot$ d. Altering data on the server $\cdot$ e. Adding styles to a Reflex app
+
+%=====================================================================
+\section{a. Rendering a collection, modules}
+
+\subsection{Two kinds of lists}
+
+A Reflex page can show a list in two different ways, and which one you need depends on \emph{when} the list is known.
+
+\textbf{A fixed list, known when the app compiles.} Use a normal list comprehension and pass the components with \cd{*}:
+
+\begin{py}
+def content(parts: list[Part]) -> rx.Component:
+	return rx.fragment(
+		*[part(p) for p in parts],
+	)
+\end{py}
+
+This runs once, at compile time. Python builds three \cd{part} components, and they are compiled into the page like any other component. That only works because \cd{parts} is real Python data at that moment.
+
+\textbf{A list in the state, which changes while the app runs.} A state list is a Var, and a comprehension can't loop over it: at compile time there are no items yet. Use \cd{rx.foreach}:
+
+\begin{py}
+def index() -> rx.Component:
+	return rx.el.ul(
+		rx.foreach(
+			NoteState.notes,
+			lambda n: rx.el.li(n.content, key=n.id),
+		),
+	)
+\end{py}
+
+\cd{rx.foreach(var, function)} calls your function \emph{once}, at compile time, with a Var that stands for ``one item of the list''. The component it returns is a template. Reflex compiles it into a JavaScript loop that runs in the browser and repeats the template for every item the list holds at that moment. That's why \cd{n.content} works: \cd{n} is an object Var, and \cd{.content} builds a Var for that field.
+
+\textbf{Keys.} \cd{key=n.id} gives each list element a stable identity. When the list changes, React compares the old and new elements by key to decide which DOM elements to keep, move or remove. Use a value that is unique and stays the same for an item, such as its id. Using the item's position as the key breaks down when items are removed or reordered: a different item would get the old item's key.
+
+\subsection{reduce}
+
+\cd{sum(...)} covers adding numbers. The general tool for ``combine a list into one value'' is \cd{functools.reduce}:
+
+\begin{py}
+from functools import reduce
+
+total = reduce(lambda acc, p: acc + p["exercises"], parts, 0)
+\end{py}
+
+\cd{reduce(function, items, start)} keeps a running value, the \emph{accumulator}. It starts at \cd{0}, then for each part calls \cd{function(acc, part)} and keeps the result. For three parts with 10, 7 and 14 exercises, the accumulator goes 0, 10, 17, 31. In Python, \cd{sum(p["exercises"] for p in parts)} is clearer for this case, but \cd{reduce} is worth recognising.
+
+\subsection{Splitting an app into modules}
+
+As components multiply, one file gets long. Split it by job:
+
+\begin{code}
+notes/
+├── rxconfig.py
+└── notes/
+    ├── __init__.py
+    ├── notes.py            ← the state and the page (index)
+    ├── models.py           ← data shapes (dataclasses)
+    └── components/
+        ├── __init__.py
+        └── note.py         ← one component per file
+\end{code}
+
+A file imports from another file in the same app with a \textbf{relative import}:
+
+\begin{py}
+# in notes/notes.py
+from .components.note import note
+from .models import Note
+
+# in notes/components/note.py
+from ..models import Note
+\end{py}
+
+One dot means ``the package this file is in'', two dots ``the package above it''. The empty \cd{__init__.py} files mark each folder as a package. Relative imports work because Reflex imports your app as a package (\cd{notes.notes}); the same file run on its own with \cd{python notes.py} would fail with ``attempted relative import with no known parent package''.
+
+\subsection{Exercises 2.1--2.5}
+
+\begin{exercise}{2.1: Course information, step 6}
+Copy your course information app to \cd{chapter2/courseinfo}. Give each part an \cd{id}, and move the course display into one component, \cd{course_view}, which shows the course name and its parts. \cd{index} only calls \cd{course_view(course)}. Add a fourth part and check that it appears.
+\end{exercise}
+
+\begin{exercise}{2.2: Course information, step 7}
+Show the total number of exercises under the parts, in bold (\cd{rx.el.strong}).
+\end{exercise}
+
+\begin{exercise}{2.3*: Course information, step 8}
+Compute the total with \cd{functools.reduce}.
+\end{exercise}
+
+\begin{exercise}{2.4: Course information, step 9}
+Support any number of courses. \cd{index} defines a list of courses, each with its own parts, and shows all of them under a main heading. Add a second course with two parts.
+\end{exercise}
+
+\begin{exercise}{2.5: Separate module}
+Move \cd{course_view} and the components it uses into \cd{components/course.py}, together with the \cd{Part} and \cd{Course} types, and import them in the main file.
+\end{exercise}
+
+%=====================================================================
+\section{b. Forms}
+
+\subsection{An input that follows the state}
+
+An input field has its own text, inside the browser. To use what the user types, you keep the text in the state and connect the two directions:
+
+\begin{py}
+class NoteState(rx.State):
+	notes: rx.Field[list[Note]] = rx.field(default_factory=list)
+	new_note: rx.Field[str] = rx.field("a new note...")
+
+	@rx.event
+	def set_new_note(self, value: str):
+		self.new_note = value
+
+
+def index() -> rx.Component:
+	return rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note)
+\end{py}
+
+\begin{itemize}
+\item \cd{value=NoteState.new_note}: the input always shows what the state holds. The state is the single source of truth; this is called a \textbf{controlled} input.
+\item \cd{on_change=NoteState.set_new_note}: every time the text changes, Reflex calls the handler with the new text. \cd{on_change} passes one argument, the input's current value, so the handler takes \cd{value: str}.
+\end{itemize}
+
+Without \cd{on_change}, the input would show the state's value and refuse every keystroke, because each re-render would put the old value back.
+
+\subsection{Submitting a form}
+
+\begin{py}
+import typing
+
+
+class NoteState(rx.State):
+	...
+
+	@rx.event
+	def add_note(self, form_data: dict[str, typing.Any]):
+		self.notes.append(Note(id=str(len(self.notes) + 1), content=self.new_note, important=False))
+		self.new_note = ""
+
+
+def index() -> rx.Component:
+	return rx.el.form(
+		rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
+		rx.el.button("save", type="submit"),
+		on_submit=NoteState.add_note,
+	)
+\end{py}
+
+\begin{itemize}
+\item A button with \cd{type="submit"} inside a \cd{form} submits it, and so does pressing Enter in one of its inputs.
+\item In plain HTML, submitting a form makes the browser send it to a server and \emph{reload the page}. Reflex's form stops that default behaviour (it calls the browser's \cd{preventDefault()} for you) and calls \cd{on_submit} instead.
+\item \cd{on_submit} passes one argument: a dict with the values of every input that has a \cd{name} prop. Because our input is controlled, the text is already in \cd{self.new_note}, so \cd{form_data} goes unused. The parameter still has to be there, because Reflex passes it.
+\item \cd{self.new_note = ""} empties the input, since the input shows whatever the state holds.
+\end{itemize}
+
+\subsection{Filtering with a computed var}
+
+\begin{py}
+class NoteState(rx.State):
+	...
+	show_all: rx.Field[bool] = rx.field(True)
+
+	@rx.event
+	def toggle_show_all(self):
+		self.show_all = not self.show_all
+
+	@rx.var
+	def notes_to_show(self) -> list[Note]:
+		if self.show_all:
+			return self.notes
+		return [n for n in self.notes if n.important]
+\end{py}
+
+The page loops over \cd{NoteState.notes_to_show} instead of \cd{NoteState.notes}. The full list stays untouched; the computed var derives the visible part from it after every event. The button's label changes with \cd{rx.cond}:
+
+\begin{py}
+rx.el.button(
+	"show ",
+	rx.cond(NoteState.show_all, "important", "all"),
+	on_click=NoteState.toggle_show_all,
+)
+\end{py}
+
+\subsection{Typing feels slow: debouncing}
+
+Remember from 1c that every event is a round trip to the Reflex backend. A controlled input sends an event for \emph{every keystroke}, and the input only shows the new character after the reply arrives. On a deployed app, with real network delay, fast typing lags behind and can even lose characters.
+
+\cd{rx.debounce_input} fixes this. It wraps an input, keeps the typing inside the browser, and sends \cd{on_change} only after the user pauses:
+
+\begin{py}
+rx.debounce_input(
+	rx.el.input(value=NoteState.new_note, on_change=NoteState.set_new_note),
+	force_notify_by_enter=True,
+	force_notify_on_blur=True,
+)
+\end{py}
+
+\begin{itemize}
+\item By default it waits 300 ms after the last keystroke (\cd{debounce_timeout=300}).
+\item \cd{force_notify_by_enter=True} sends the value immediately when Enter is pressed. Without it, pressing Enter right after typing could submit the form before the last characters reached the state.
+\item \cd{force_notify_on_blur=True} sends it immediately when the input loses focus, for example when the user clicks the save button.
+\end{itemize}
+
+Use it for every text input that is connected to the state.
+
+\subsection{Telling the user something: rx.window\_alert}
+
+A handler can return an \emph{event} for the browser to run. \cd{rx.window_alert(message)} is one: it opens the browser's alert box.
+
+\begin{py}
+@rx.event
+def add_note(self, form_data: dict[str, typing.Any]):
+	if self.new_note == "":
+		return rx.window_alert("a note can't be empty")
+	...
+\end{py}
+
+\cd{return} ends the handler there, so nothing is added. Section 2d and 2e show more events a handler can return.
+
+\subsection{Exercises 2.6--2.10}
+
+Create \cd{chapter2/phonebook}. Start from this page:
+
+\begin{py}
+class PhonebookState(rx.State):
+	persons: rx.Field[list[Person]] = rx.field(default_factory=list)
+	new_name: rx.Field[str] = rx.field("")
+\end{py}
+
+with a \cd{Person} dataclass in \cd{models.py} (start with only \cd{name: str}), a heading ``Phonebook'', a form with a name input and an \cd{add} button, and a list of names under the heading ``Numbers''.
+
+\begin{exercise}{2.6: The Phonebook, step 1}
+Adding a name with the form adds it to the list on the page.
+\end{exercise}
+
+\begin{exercise}{2.7: The Phonebook, step 2}
+Prevent duplicates. If the name already exists, show an alert (\cd{rx.window_alert}) such as ``Maren Holt is already added to phonebook'' and don't add it. \cd{any(...)} with a generator expression checks whether at least one item matches: \cd{any(p.name == self.new_name for p in self.persons)}.
+\end{exercise}
+
+\begin{exercise}{2.8: The Phonebook, step 3}
+Add a phone number: a \cd{number} field in \cd{Person}, a second input, and the number shown next to each name.
+\end{exercise}
+
+\begin{exercise}{2.9*: The Phonebook, step 4}
+Add a filter input. Only persons whose name contains the filter text are shown, ignoring upper and lower case (\cd{str.lower()}). Use a computed var. Start the state with a few persons so there is something to filter:
+
+\begin{py}
+Person(name="Maren Holt", number="040-123456"),
+Person(name="Idris Okafor", number="39-44-5323523"),
+Person(name="Lena Vasquez", number="12-43-234345"),
+Person(name="Tobias Rhee", number="39-23-6423122"),
+\end{py}
+\end{exercise}
+
+\begin{exercise}{2.10: The Phonebook, step 5}
+Split the page into components: the filter, the form for adding a person, and the list of persons (with a component for one person). Keep the state in its own file, \cd{state.py}. Pass Vars and handlers to the components through parameters. Use \cd{rx.debounce_input} for every input.
+\end{exercise}
+
+%=====================================================================
+\section{c. Getting data from a server}
+
+So far all data has lived in the state, which disappears when the Reflex server restarts, and which each browser tab has its own copy of. Real apps keep their data on a \textbf{server} that every user talks to.
+
+\subsection{HTTP in short}
+
+Browsers and servers talk with \textbf{HTTP}. Every exchange is a \textbf{request} followed by a \textbf{response}.
+
+A request has:
+\begin{itemize}
+\item a \textbf{method}, which says what to do: \cd{GET} (read), \cd{POST} (create), \cd{PUT}/\cd{PATCH} (change), \cd{DELETE} (remove);
+\item a \textbf{URL}, which says what it's about: \url{http://localhost:3001/notes/2} is the scheme (\cd{http}), the host (\cd{localhost}, which means ``this computer''), the \textbf{port} (\cd{3001}, which program on that computer) and the path (\cd{/notes/2});
+\item \textbf{headers}, extra information as name--value pairs, such as \cd{Content-Type: application/json};
+\item an optional \textbf{body}, the data sent along, for example the new note.
+\end{itemize}
+
+A response has a \textbf{status code}, headers, and an optional body. The status code's first digit gives the category:
+
+\begin{center}
+\begin{tabularx}{0.9\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Code} & \textbf{Meaning} \\
+\midrule
+\cd{200 OK} & success, here is the result \\
+\cd{201 Created} & success, a new resource was created \\
+\cd{204 No Content} & success, nothing to send back \\
+\cd{400 Bad Request} & the request itself is wrong \\
+\cd{404 Not Found} & no such resource \\
+\cd{500 Internal Server Error} & the server crashed while handling it \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+2xx means success, 4xx means the client made a mistake, and 5xx means the server failed.
+
+\subsection{JSON}
+
+Data travels as text. The common format is \textbf{JSON} (JavaScript Object Notation), which looks almost like Python's literals:
+
+\begin{code}
+[
+  {"id": "1", "content": "HTML is easy", "important": true},
+  {"id": "2", "content": "Browser can execute only JavaScript", "important": false}
+]
+\end{code}
+
+JSON has objects (Python dicts), arrays (lists), strings, numbers, \cd{true}/\cd{false} (\cd{True}/\cd{False}) and \cd{null} (\cd{None}). Turning Python data into JSON text is \emph{serialising}; reading it back is \emph{parsing}.
+
+\subsection{REST}
+
+Most web APIs follow a convention called \textbf{REST}. Data is organised into \textbf{resources}, each with its own URL, and the HTTP method says what to do with it:
+
+\begin{center}
+\begin{tabularx}{0.95\textwidth}{@{}llX@{}}
+\toprule
+\textbf{URL} & \textbf{Method} & \textbf{What it does} \\
+\midrule
+\cd{/notes} & \cd{GET} & return all notes \\
+\cd{/notes/10} & \cd{GET} & return the note with id 10 \\
+\cd{/notes} & \cd{POST} & create a new note from the request body \\
+\cd{/notes/10} & \cd{PUT} & replace note 10 with the request body \\
+\cd{/notes/10} & \cd{PATCH} & change only the fields in the request body \\
+\cd{/notes/10} & \cd{DELETE} & remove note 10 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\cd{/notes} is a \emph{collection}; \cd{/notes/10} is one item in it. The server, not the client, chooses the id of a new item.
+
+\subsection{A server to practise with}
+
+The original course uses a tool called \emph{json-server}. This book uses a small Python replacement, \cd{tools/mock_server.py}: it reads a JSON file and serves every top-level list in it as a REST collection, writing every change back to the file. Get the file from the course repository and put it in \cd{tools/} at the root of yours. It uses only Python's standard library.
+
+In \cd{chapter2/notes}, create \cd{db.json}:
+
+\begin{code}
+{
+  "notes": [
+    {"id": "1", "content": "HTML is easy", "important": true},
+    {"id": "2", "content": "Browser can execute only JavaScript", "important": false},
+    {"id": "3", "content": "GET and POST are the most important methods of HTTP protocol", "important": true}
+  ]
+}
+\end{code}
+
+and start the server from that folder, in a second terminal:
+
+\begin{code}
+python ../../tools/mock_server.py db.json --port 3001
+\end{code}
+
+Open \url{http://localhost:3001/notes} in the browser. The browser sends a \cd{GET} request, and the JSON appears. The server prints every request it receives, which is useful when your app doesn't behave as expected. It picks new ids itself, as random strings like \cd{"a3f9"}.
+
+\subsection{Synchronous and asynchronous code}
+
+A request to a server takes time: milliseconds locally, much longer over the internet. What should the program do while it waits?
+
+\textbf{Synchronous} code simply waits. The line that sends the request doesn't return until the response is there, and nothing else happens in the meantime. For a server that serves many users, that is wasteful: while one handler waits for the network, others could run.
+
+\textbf{Asynchronous} code lets the program do other work while waiting. In Python it is written with \cd{async} and \cd{await}:
+
+\begin{py}
+import asyncio
+
+
+async def fetch_notes():
+	print("asking")
+	await asyncio.sleep(1)      # stands for waiting on the network
+	print("got them")
+	return ["HTML is easy"]
+\end{py}
+
+How it works:
+
+\begin{itemize}
+\item \cd{async def} defines a \textbf{coroutine function}. Calling it does \emph{not} run the body; it returns a \textbf{coroutine}, a paused piece of work.
+\item An \textbf{event loop} runs coroutines. It runs one until it reaches an \cd{await} on something that isn't ready yet. Then that coroutine is put aside, and the loop runs another one. When the awaited thing is ready (the response arrived, the second passed), the loop continues the first coroutine from exactly where it stopped.
+\item \cd{await} can only be used inside an \cd{async def}. Writing it is how a coroutine says ``I'm waiting here; do something else meanwhile''.
+\end{itemize}
+
+So there is still only one thread doing work at any moment; the loop just switches between tasks at every \cd{await}. Reflex runs an event loop for you, and an event handler may be an \cd{async def}: while it awaits a server's reply, the Reflex backend keeps handling other users' events.
+
+\subsection{httpx}
+
+\textbf{Why a library is needed.} An HTTP request is, underneath, text sent over a network connection. To send one by hand, a program has to open a connection to the right host and port, set up encryption for \cd{https}, write the request line, the headers and the body in the exact format HTTP prescribes, read the reply as raw bytes, split it into status, headers and body, and handle redirects, timeouts and broken connections. Python's standard library has low-level tools for this (\cd{urllib}, \cd{http.client}), but using them takes many lines for every request.
+
+\textbf{httpx} is a library that does all of that behind one function call, in the role axios plays in the original course. You say ``GET this URL'' and get back a response object with the status, the headers and the body, already decoded. It also supports \cd{async}, which matters inside Reflex handlers, as explained above. Install it (\cd{pip install httpx}) and add it to the app's \cd{requirements.txt}.
+
+\begin{py}
+import httpx
+
+
+async def get_all() -> list[dict]:
+	async with httpx.AsyncClient() as client:
+		response = await client.get("http://localhost:3001/notes")
+	response.raise_for_status()
+	return response.json()
+\end{py}
+
+\begin{itemize}
+\item \cd{httpx.AsyncClient()} is the asynchronous client, which you \cd{await}. httpx also has a synchronous one (\cd{httpx.get(...)}) that would block the Reflex backend while waiting.
+\item \cd{async with ... as client:} opens the client and guarantees it is closed when the block ends, even if an error happens. This is the \cd{with} block from 1b: the client is a context manager whose cleanup closes its network connections. \cd{async with} is the version whose setup and cleanup are coroutines, so Python awaits them.
+\item The \cd{response = ...} line is inside the \cd{with} block because the request needs the open client. The lines after it are outside: by then the whole response has been read into memory, so it can be used after the client is closed.
+\item \cd{client.get(url)} sends a \cd{GET}. There are matching \cd{.post}, \cd{.put}, \cd{.patch} and \cd{.delete}. To send a JSON body, pass \cd{json={...}}: httpx serialises it and sets the \cd{Content-Type} header.
+\item \cd{response.raise_for_status()} raises \cd{httpx.HTTPStatusError} if the status is 4xx or 5xx. Without it, a \cd{404} would come back like any other response, and your code would carry on with an error body as if it were data.
+\item \cd{response.json()} parses the body into Python lists and dicts.
+\end{itemize}
+
+\subsection{Turning JSON into objects}
+
+The notes come back as dicts. The app works with \cd{Note} objects, so convert them with \cd{**}:
+
+\begin{py}
+# notes/models.py
+from dataclasses import dataclass
+
+
+@dataclass
+class Note:
+	id: str
+	content: str
+	important: bool
+\end{py}
+
+\begin{py}
+[Note(**n) for n in response.json()]
+\end{py}
+
+\cd{Note(**{"id": "1", "content": "HTML is easy", "important": True})} is \cd{Note(id="1", content="HTML is easy", important=True)}. If the JSON has a key the dataclass doesn't, or lacks one it needs, this raises \cd{TypeError}, which tells you right away that the server's data doesn't have the shape you expected.
+
+\subsection{Loading data when the page opens}
+
+\begin{py}
+class NoteState(rx.State):
+	notes: rx.Field[list[Note]] = rx.field(default_factory=list)
+
+	@rx.event
+	async def load_notes(self):
+		self.notes = await note_service.get_all()
+
+
+app = rx.App()
+app.add_page(index, on_load=NoteState.load_notes)
+\end{py}
+
+\cd{on_load} is an event that runs every time the page is opened. The page first shows an empty list, then the notes appear when the handler finishes and the delta arrives. This is the Reflex version of React's \cd{useEffect} in the original course.
+
+\subsection{Services: one module that talks to the server}
+
+Put every request in one module, so the state never deals with URLs or HTTP details:
+
+\begin{py}
+# notes/services/note_service.py
+import httpx
+
+from ..models import Note
+
+BASE_URL = "http://localhost:3001/notes"
+
+
+async def get_all() -> list[Note]:
+	async with httpx.AsyncClient() as client:
+		response = await client.get(BASE_URL)
+	response.raise_for_status()
+	return [Note(**n) for n in response.json()]
+
+
+async def create(content: str, important: bool) -> Note:
+	async with httpx.AsyncClient() as client:
+		response = await client.post(BASE_URL, json={"content": content, "important": important})
+	response.raise_for_status()
+	return Note(**response.json())
+\end{py}
+
+\cd{services/} needs an empty \cd{__init__.py} too. In the state, \cd{from .services import note_service} and then \cd{await note_service.get_all()}. When the server's address changes (and it will, in chapter 3), only \cd{BASE_URL} changes.
+
+\subsection{Exercise 2.11}
+
+\begin{exercise}{2.11: The Phonebook, step 6}
+Put the persons in \cd{chapter2/phonebook/db.json} under the key \cd{"persons"}, each with an \cd{"id"}, and run the mock server on port 3001. Load the persons from the server when the page opens, using \cd{httpx} and \cd{on_load}. Add \cd{id: str} to \cd{Person}.
+\end{exercise}
+
+%=====================================================================
+\section{d. Altering data on the server}
+
+\subsection{Creating}
+
+Saving a new note becomes a \cd{POST}. The server answers with the note it saved, including the id it chose:
+
+\begin{py}
+@rx.event
+async def add_note(self, form_data: dict[str, typing.Any]):
+	created = await note_service.create(content=self.new_note, important=random() < 0.5)
+	self.notes.append(created)
+	self.new_note = ""
+\end{py}
+
+Add the object the \emph{server} returned, not one built locally: only the server's copy has the real id. (\cd{random() < 0.5} makes about half of the new notes important, so there's something to filter.)
+
+\subsection{Changing}
+
+Each note gets a button that toggles its importance. A button inside \cd{rx.foreach} needs to tell the handler \emph{which} note was clicked:
+
+\begin{py}
+# notes/components/note.py
+def note(data: rx.vars.ObjectVar[Note], toggle_importance) -> rx.Component:
+	return rx.el.li(
+		data.content,
+		" ",
+		rx.el.button(
+			rx.cond(data.important, "make not important", "make important"),
+			on_click=lambda: toggle_importance(data.id),
+		),
+		key=data.id,
+	)
+\end{py}
+
+\begin{py}
+# notes/notes.py, in index()
+rx.foreach(NoteState.notes_to_show, lambda n: note(n, NoteState.toggle_importance))
+\end{py}
+
+\textbf{How the id reaches the handler.} \cd{on_click=NoteState.toggle_importance} alone would call the handler with no id. \cd{lambda: toggle_importance(data.id)} is a function Reflex calls once, at compile time. Calling an event handler with arguments doesn't run it; it builds an \emph{event spec}: ``call \cd{toggle_importance} with this Var as argument''. \cd{data.id} is the Var for the current item's id, so in the browser each button sends its own note's id along with the event.
+
+The handler and the service:
+
+\begin{py}
+@rx.event
+async def toggle_importance(self, note_id: str):
+	note = next(n for n in self.notes if n.id == note_id)
+	updated = await note_service.update_important(note_id, not note.important)
+	self.notes = [updated if n.id == note_id else n for n in self.notes]
+\end{py}
+
+\begin{py}
+async def update_important(note_id: str, important: bool) -> Note:
+	async with httpx.AsyncClient() as client:
+		response = await client.patch(f"{BASE_URL}/{note_id}", json={"important": important})
+	response.raise_for_status()
+	return Note(**response.json())
+\end{py}
+
+\begin{itemize}
+\item \cd{next(generator)} returns the first item the generator produces: here, the first note with that id. With no match it raises \cd{StopIteration}; \cd{next(generator, None)} returns \cd{None} instead.
+\item \cd{PATCH} sends only the field that changes. \cd{PUT} would replace the whole note, so you'd have to send every field.
+\item The last line builds a new list in which the changed note is replaced by the server's version and every other note is kept.
+\end{itemize}
+
+\subsection{Handling errors}
+
+Requests fail: the server may be down, or the note may have been deleted by someone else in the meantime. Then \cd{raise_for_status()} raises \cd{httpx.HTTPStatusError}, and if nobody catches it, the handler stops with a traceback in the terminal and the user sees nothing.
+
+\begin{py}
+@rx.event
+async def toggle_importance(self, note_id: str):
+	note = next(n for n in self.notes if n.id == note_id)
+	try:
+		updated = await note_service.update_important(note_id, not note.important)
+	except httpx.HTTPStatusError as error:
+		if error.response.status_code == 404:
+			self.notes = [n for n in self.notes if n.id != note_id]
+			return rx.window_alert(f"the note '{note.content}' was already deleted from the server")
+		raise
+	self.notes = [updated if n.id == note_id else n for n in self.notes]
+\end{py}
+
+\begin{itemize}
+\item \cd{try} runs the code; if an exception of the listed type happens inside it, Python jumps to \cd{except}. \cd{as error} gives you the exception object, and \cd{error.response} is the response that caused it.
+\item For a \cd{404}, the note is gone on the server, so it is removed locally too, and the user is told why.
+\item \cd{raise} with nothing after it re-raises the same exception. Every status you don't handle on purpose stays visible in the terminal instead of being silently ignored. Catching an error and doing nothing is one of the worst bugs to find later.
+\end{itemize}
+
+\subsection{Deleting, and asking first}
+
+Deleting is a \cd{DELETE} request; the mock server answers with the removed item. Exercise 2.14 asks to confirm before deleting. The browser's confirm box is a JavaScript function, \cd{window.confirm(message)}, which returns \cd{true} or \cd{false}. Reflex can run JavaScript and send the result to a handler:
+
+\begin{py}
+import json
+
+
+@rx.event
+def ask_delete(self, person_id: str):
+	person = next(p for p in self.persons if p.id == person_id)
+	message = f"Delete {person.name}?"
+	return rx.call_script(
+		f"window.confirm({json.dumps(message)})",
+		callback=lambda result: PhonebookState.delete_person(person_id, result),
+	)
+
+
+@rx.event
+async def delete_person(self, person_id: str, confirmed: bool):
+	if not confirmed:
+		return
+	...
+\end{py}
+
+\begin{itemize}
+\item \cd{rx.call_script(code, callback=...)} is an event that runs \cd{code} in the browser. When it finishes, its result is sent to the callback, here as \cd{result}.
+\item \cd{json.dumps(message)} turns the Python string into a JavaScript string literal with quotes and escaping, so a name containing a quote can't break the script.
+\item The callback is a lambda that builds the next event, passing along both the id (a normal Python value, captured when \cd{ask_delete} runs) and the user's answer.
+\end{itemize}
+
+\subsection{Exercises 2.12--2.15}
+
+\begin{exercise}{2.12: The Phonebook, step 7}
+New persons are saved on the server with \cd{POST}.
+\end{exercise}
+
+\begin{exercise}{2.13: The Phonebook, step 8}
+Move every request into \cd{services/person_service.py}.
+\end{exercise}
+
+\begin{exercise}{2.14: The Phonebook, step 9}
+Add a delete button to each person. Ask for confirmation with \cd{window.confirm} before deleting, and remove the person on the server and on the page.
+\end{exercise}
+
+\begin{exercise}{2.15*: The Phonebook, step 10}
+If a name that already exists is added, ask ``Maren Holt is already added to phonebook, replace the old number with a new one?''. If confirmed, change the number on the server with \cd{PATCH} and replace the person on the page with the server's version.
+\end{exercise}
+
+%=====================================================================
+\section{e. Adding styles to a Reflex app}
+
+\subsection{CSS}
+
+CSS rules choose elements with a \textbf{selector} and set properties on them:
+
+\begin{code}
+h1 {
+    color: green;
+    font-style: italic;
+}
+
+.note {
+    color: grey;
+    padding-top: 3px;
+    font-size: 15px;
+}
+\end{code}
+
+\begin{itemize}
+\item \cd{h1 { ... }} applies to every \cd{<h1>} element.
+\item \cd{.note { ... }} applies to every element with the \textbf{class} \cd{note}. Classes let you style chosen elements instead of all elements of a type.
+\end{itemize}
+
+When several rules set the same property on one element, the more specific selector wins (a class beats a tag name), and between equally specific rules, the later one wins. That's the ``cascade'' in Cascading Style Sheets.
+
+\subsection{Stylesheets in Reflex}
+
+Put the rules in \cd{assets/styles.css}. Everything in \cd{assets/} is served as-is at the root of the site, so the file is available at \cd{/styles.css}. Load it in the app:
+
+\begin{py}
+app = rx.App(stylesheets=["/styles.css"])
+\end{py}
+
+Give an element a class with the \cd{class_name} prop. It is called \cd{class_name} because \cd{class} is a reserved word in Python:
+
+\begin{py}
+rx.el.li(data.content, class_name="note")
+\end{py}
+
+\textbf{Inline styles} set CSS properties directly on one component, as keyword props. CSS names with dashes are written with underscores:
+
+\begin{py}
+def footer() -> rx.Component:
+	return rx.el.div(
+		rx.el.em("Note app, Department of Computer Science"),
+		color="green",
+		font_style="italic",
+		font_size="16px",
+	)
+\end{py}
+
+Inline styles are convenient for one-off cases. For anything reused, a class in the stylesheet keeps the look in one place.
+
+\subsection{An error message component}
+
+Replace the alert from 2d with a message on the page:
+
+\begin{py}
+# notes/components/notification.py
+def notification(message: rx.Var[str]) -> rx.Component:
+	return rx.cond(
+		message,
+		rx.el.div(message, class_name="error"),
+	)
+\end{py}
+
+\begin{code}
+.error {
+    color: red;
+    background: lightgrey;
+    font-size: 20px;
+    border-style: solid;
+    border-radius: 5px;
+    padding: 10px;
+    margin-bottom: 10px;
+}
+\end{code}
+
+An empty string counts as false, so the component shows nothing while \cd{error_message} is \cd{""}. The state gets \cd{error_message: rx.Field[str] = rx.field("")}, and the 404 branch sets it instead of returning an alert.
+
+\subsection{Removing the message after five seconds: background events}
+
+The message should disappear by itself. The obvious version doesn't work well:
+
+\begin{py}
+@rx.event
+async def toggle_importance(self, note_id: str):
+	...
+	self.error_message = "..."
+	await asyncio.sleep(5)          # don't do this
+	self.error_message = ""
+\end{py}
+
+\textbf{Why not.} Reflex processes the events of one browser tab \emph{one at a time}: while a handler runs, it holds that tab's state, and the next event waits in a queue. A handler that sleeps for five seconds freezes the tab for five seconds; every click in the meantime waits. Also, the delta is only sent when the handler ends, so the message would never even appear.
+
+A \textbf{background event} runs without holding the state:
+
+\begin{py}
+import asyncio
+
+
+class NoteState(rx.State):
+	...
+
+	@rx.event(background=True)
+	async def clear_error_later(self):
+		await asyncio.sleep(5)
+		async with self:
+			self.error_message = ""
+\end{py}
+
+\begin{itemize}
+\item \cd{@rx.event(background=True)} marks it as a background event. It must be \cd{async}.
+\item While it sleeps, other events of the same tab run normally.
+\item To change the state, it must take the state for a moment with \cd{async with self:}. Inside the block it has the latest state and may change it; when the block ends, the changes are sent to the browser, and other events can run again. Changing \cd{self} outside such a block raises an error.
+\end{itemize}
+
+Start it by \emph{returning} it from the handler that sets the message:
+
+\begin{py}
+if error.response.status_code == 404:
+	self.notes = [n for n in self.notes if n.id != note_id]
+	self.error_message = f"Note '{note.content}' was already removed from the server"
+	return NoteState.clear_error_later
+\end{py}
+
+A handler can return another event (or a list of events), and Reflex runs it after the handler finishes. Here, the message is sent to the browser first, and five seconds later the background event clears it.
+
+\subsection{Data from an external API, and secrets}
+
+Exercises 2.18--2.20 use two public APIs. The second needs an \textbf{API key}, a secret string that identifies you to the service. A key must never be written in the code: anything in a Git repository can end up public. Put it in an \textbf{environment variable} instead. Environment variables are name--value pairs that every program receives from the terminal that started it.
+
+\begin{code}
+export WEATHER_API_KEY=your-key-here
+reflex run
+\end{code}
+
+\cd{export} sets the variable in the current terminal, for every program started from it. In Python, \cd{os.environ} is a dict of all of them:
+
+\begin{py}
+import os
+
+API_KEY = os.environ["WEATHER_API_KEY"]                       # KeyError if it's missing
+BACKEND = os.environ.get("BACKEND_URL", "http://localhost:3001")   # default if it's missing
+\end{py}
+
+With \cd{[...]}, a missing key stops the app at once with a clear error, which is right for something the app can't work without. \cd{export} lasts only until the terminal closes; chapter 3c shows how to keep such values in a file.
+
+\textbf{Backend-only state variables.} The countries app loads all 250 countries but shows only a few. A state variable whose name starts with an underscore, such as \cd{_all_countries}, is \emph{backend-only}: it stays on the Reflex server and is never sent to the browser. Use one for data the page never shows directly; sending large data to the browser on every change would be slow for nothing.
+
+\textbf{Query parameters.} Many APIs take options in the URL after a \cd{?}, as \cd{name=value} pairs joined with \cd{&}: \cd{...weather?q=Helsinki&units=metric}. httpx builds that part for you and escapes special characters:
+
+\begin{py}
+await client.get(url, params={"q": city, "units": "metric"})
+\end{py}
+
+\subsection{Exercises 2.16--2.20}
+
+\begin{exercise}{2.16: Phonebook, step 11}
+After a person is added or a number changed, show a green success message for five seconds, such as ``Added Maren Holt''. Put the styles in \cd{assets/styles.css}.
+\end{exercise}
+
+\begin{exercise}{2.17*: Phonebook, step 12}
+Open the app in two browsers. Delete a person in one, then try to change the same person's number in the other. Show a red error message such as ``Information of Maren Holt has already been removed from server'' and remove the person from the page. Use one notification component for both kinds of message, with a class (\cd{"success"} or \cd{"failure"}) kept in the state.
+\end{exercise}
+
+\begin{exercise}{2.18*: Data for countries, step 1}
+Create \cd{chapter2/countries}. The API at \url{https://studies.cs.helsinki.fi/restcountries/api/all} returns all countries. Load them when the page opens, and show an input for searching by name:
+\begin{itemize}
+\item more than 10 matches: show ``Too many matches, specify another filter'';
+\item 2 to 10 matches: list their names;
+\item exactly one match: show its name, capital, area, languages and flag.
+\end{itemize}
+Not every country has a capital or languages; handle both. Keep the full list in a backend-only state variable.
+\end{exercise}
+
+\begin{exercise}{2.19*: Data for countries, step 2}
+Add a \cd{show} button next to each listed name that shows that country's details.
+\end{exercise}
+
+\begin{exercise}{2.20*: Data for countries, step 3}
+Show the current weather in the capital: temperature, wind and the weather icon. Use OpenWeatherMap (\url{https://api.openweathermap.org/data/2.5/weather}, with the query parameters \cd{q}, \cd{appid} and \cd{units=metric}). Create a free account for an API key and read it from the environment variable \cd{WEATHER_API_KEY}. A new key can take a while to become active. Icons are at \url{https://openweathermap.org/img/wn/<icon>@2x.png}.
+\end{exercise}

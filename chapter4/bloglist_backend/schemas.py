@@ -15,3 +15,7 @@ class BlogOut(BaseModel):
 	author: str
 	url: str
 	likes: int
+
+
+class BlogUpdate(BaseModel):
+	likes: int

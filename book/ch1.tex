@@ -1,0 +1,685 @@
+\chapter{Introduction to Reflex}
+
+\textbf{Sections:} a. Introduction to Reflex $\cdot$ b. Python for this course $\cdot$ c. Component state, event handlers $\cdot$ d. A more complex state, debugging Reflex apps
+
+%=====================================================================
+\section{a. Introduction to Reflex}
+
+\subsection{What a web page is made of}
+
+When you open a web page, your browser downloads and runs three kinds of files:
+
+\begin{itemize}
+\item \textbf{HTML} describes the page's \emph{structure}: headings, paragraphs, buttons, lists. It is a tree of \textbf{elements}, written as tags: \cd{<h1>Notes</h1>}, \cd{<button>save</button>}. An element can contain text and other elements (its \textbf{children}), and it can have \textbf{attributes}, such as \cd{<img src="flag.png">}.
+\item \textbf{CSS} describes how elements \emph{look}: colours, sizes, spacing (chapter 2e).
+\item \textbf{JavaScript} is the only programming language a browser runs. It makes the page interactive: it reacts to clicks and changes the page without reloading it.
+\end{itemize}
+
+The browser keeps the page as a tree of objects called the \textbf{DOM} (Document Object Model). JavaScript changes what you see by changing the DOM.
+
+\subsection{What React is, and what Reflex adds}
+
+The original course writes the frontend in \textbf{React}, a JavaScript library. In React you describe the page as \textbf{components}: functions that return a piece of the page. When data changes, React calls the components again and updates only the parts of the DOM that are different.
+
+\textbf{Reflex} lets you write the same kind of app entirely in Python. It works in two halves:
+
+\begin{enumerate}
+\item \textbf{Compiling.} Your component functions are ordinary Python functions. When you start the app, Reflex calls them once, collects the tree of components they return, and \emph{compiles} it into a React app (JavaScript), which it saves in the hidden folder \cd{.web/}. That JavaScript is what runs in the browser.
+\item \textbf{The Reflex backend.} Your \emph{state} (the data that changes) and your \emph{event handlers} (the code that runs when the user clicks) stay in Python and run on a small server that Reflex starts for you. The browser and that server stay connected through a \textbf{WebSocket}, a network connection that stays open so messages can go both ways at any time.
+\end{enumerate}
+
+So a Reflex app is really two programs: JavaScript in the browser that draws the page, and Python on a server that holds the state. Section 1c follows one click through both of them.
+
+\subsection{Creating an app}
+
+Install Reflex in your venv and create the first app:
+
+\begin{code}
+pip install reflex
+mkdir -p chapter1/intro && cd chapter1/intro
+reflex init
+\end{code}
+
+Choose the blank template. \cd{reflex init} creates:
+
+\begin{code}
+intro/
+├── rxconfig.py        ← app settings (the app's name, plugins)
+├── requirements.txt   ← the Python packages this app needs
+├── assets/            ← static files: images, the favicon, CSS (chapter 2e)
+├── .gitignore         ← already ignores .web/ and other generated files
+└── intro/
+    ├── __init__.py
+    └── intro.py       ← your code
+\end{code}
+
+The inner folder has the same name as the app: Reflex imports \cd{intro/intro.py} and looks for a variable named \cd{app} in it. Start the app with:
+
+\begin{code}
+reflex run
+\end{code}
+
+The first start is slow because Reflex installs the JavaScript packages it needs. Open \cd{http://localhost:3000}. \cd{localhost} is a name that always means ``this computer''. The number after the colon is a \textbf{port}. One computer can run many programs that accept network connections, so each program listens on its own port number, and a connection names the port to say which program it's for, like an apartment number in a street address. Two servers are now running:
+
+\begin{itemize}
+\item port \textbf{3000}: the \textbf{frontend} server, which sends the compiled JavaScript to the browser;
+\item port \textbf{8000}: the \textbf{Reflex backend}, which runs your state and handlers.
+\end{itemize}
+
+While \cd{reflex run} is running, it watches your files: save a change and the page reloads by itself. Stop it with Ctrl+C.
+
+\subsection{Components}
+
+Replace the contents of \cd{intro/intro.py}:
+
+\begin{py}
+import reflex as rx
+
+
+def index() -> rx.Component:
+	return rx.el.div(
+		rx.el.p("Hello world"),
+	)
+
+
+app = rx.App()
+app.add_page(index)
+\end{py}
+
+\begin{itemize}
+\item \cd{import reflex as rx} imports the library under the short name \cd{rx}.
+\item \cd{index} is a \textbf{component}: a function that returns an \cd{rx.Component}. \cd{-> rx.Component} is a \emph{type hint} that says what the function returns (section 1b).
+\item \cd{rx.el.div(...)} and \cd{rx.el.p(...)} create the HTML elements \cd{<div>} and \cd{<p>}. Everything under \cd{rx.el} is a plain HTML element with the same name. (Reflex also has ready-styled components such as \cd{rx.button}; this book uses the plain \cd{rx.el} ones, so what you write maps directly to HTML.)
+\item \cd{app = rx.App()} creates the app, and \cd{app.add_page(index)} makes \cd{index} the page shown at \cd{/}.
+\end{itemize}
+
+\textbf{Children and props.} The \emph{positional} arguments of a component are its children: text or other components. The \emph{keyword} arguments are its \textbf{props} (properties), which become HTML attributes or event handlers:
+
+\begin{py}
+rx.el.img(src="https://example.com/flag.png")      # prop: src
+rx.el.button("save", type="submit")               # child: "save", prop: type
+\end{py}
+
+Because components are plain functions, you can compute values with normal Python before returning:
+
+\begin{py}
+def hello(name: str, age: int) -> rx.Component:
+	return rx.el.p(f"Hello {name}, you are {age} years old")
+
+
+def index() -> rx.Component:
+	now = 2026
+	return rx.el.div(
+		rx.el.h1("Greetings"),
+		hello("Maren", 2026 - 1999),
+		hello("Idris", 26),
+	)
+\end{py}
+
+\cd{hello} is a component of your own. It receives data through its \textbf{parameters}, the same role props play in React. Splitting a page into small components, each with one job, is how every app in this book is built.
+
+\textbf{Fragments.} A component returns exactly one root component. When you want to return several siblings without wrapping them in an extra \cd{<div>}, use \cd{rx.fragment(...)}: it groups its children but adds nothing to the HTML.
+
+\begin{warn}[Remember: these functions run once]
+\cd{index()} is called when Reflex \emph{compiles} the app, not every time the page is shown. A line like \cd{now = datetime.now()} inside a component would freeze the time of compilation into the page. Data that changes while the app runs belongs in the \emph{state}, which section 1c introduces.
+\end{warn}
+
+\subsection{Exercises 1.1--1.2}
+
+Create each exercise app as its own Reflex app inside \cd{chapter1/}. Commit after each exercise.
+
+\begin{exercise}{1.1: Course information, step 1}
+Create \cd{chapter1/courseinfo} with \cd{reflex init}. Start from this single component:
+
+\begin{py}
+def index() -> rx.Component:
+	course = "Half Stack application development"
+	part1 = "Fundamentals of Reflex"
+	exercises1 = 10
+	part2 = "Using arguments to pass data"
+	exercises2 = 7
+	part3 = "State of a component"
+	exercises3 = 14
+
+	return rx.el.div(
+		rx.el.h1(course),
+		rx.el.p(f"{part1} {exercises1}"),
+		rx.el.p(f"{part2} {exercises2}"),
+		rx.el.p(f"{part3} {exercises3}"),
+		rx.el.p(f"Number of exercises {exercises1 + exercises2 + exercises3}"),
+	)
+\end{py}
+
+Split it into three components: \cd{header} (the course name), \cd{content} (the parts and their exercise counts) and \cd{total} (the number of exercises). Pass all data through parameters; \cd{index} keeps the data and only calls the three components.
+\end{exercise}
+
+\begin{exercise}{1.2: Course information, step 2}
+Refactor \cd{content} so that it uses a fourth component, \cd{part}, which renders the name and exercise count of one part. \cd{content} calls \cd{part} three times.
+\end{exercise}
+
+%=====================================================================
+\section{b. Python for this course}
+
+The original course spends this section on JavaScript. This one covers the Python the rest of the book relies on. If something here is familiar, skim it, but read the parts about type hints, unpacking, comprehensions, lambdas and decorators: they appear on almost every page.
+
+\subsection{Values, names and types}
+
+A Python variable is a \emph{name} that points to a value. Every value has a type (\cd{int}, \cd{float}, \cd{str}, \cd{bool}, \cd{None}, \ldots). The name itself has no type; the same name can later point to a value of another type.
+
+\textbf{Type hints} write down the type you intend:
+
+\begin{py}
+count: int = 0
+names: list[str] = ["Maren", "Idris"]
+
+def total(a: int, b: int) -> int:
+	return a + b
+\end{py}
+
+Python itself ignores hints when running the code: \cd{total("a", "b")} runs and returns \cd{"ab"}. They are read by \emph{tools}: Pylance warns you while you write, and libraries can read them on purpose. Reflex uses them to know the type of each state variable, and in chapter 3 FastAPI uses them to check every request. So in this book, hints are not decoration: they change what the libraries do.
+
+\cd{int | None} means ``an \cd{int} or \cd{None}''. You will use it for values that may be missing.
+
+\subsection{Strings and f-strings}
+
+\begin{py}
+name = "Maren"
+f"Hello {name}, 2 + 3 = {2 + 3}"     # 'Hello Maren, 2 + 3 = 5'
+\end{py}
+
+An \textbf{f-string} (the \cd{f} before the quote) evaluates every \cd{{...}} and inserts the result. Inside the braces you can write any expression. A format spec after a colon controls how a number is printed: \cd{f"{3.14159:.1f}"} gives \cd{'3.1'}.
+
+\subsection{Lists, dicts and tuples}
+
+\begin{py}
+parts = ["Fundamentals", "State"]          # list: ordered, can change
+parts.append("Forms")                      # add at the end
+parts[0]                                   # 'Fundamentals' (first item)
+parts[-1]                                  # 'Forms' (last item)
+len(parts)                                 # 3
+
+part = {"name": "State", "exercises": 14}  # dict: key -> value
+part["name"]                               # 'State'
+part.get("missing", 0)                     # 0: a default instead of an error
+part["exercises"] = 15                     # change a value
+
+point = (3, 4)                             # tuple: like a list, but cannot change
+x, y = point                               # unpacking: x = 3, y = 4
+\end{py}
+
+Reading a missing key with \cd{part["missing"]} raises \cd{KeyError}; \cd{.get(key, default)} returns the default instead.
+
+\textbf{Names point to objects; they don't copy them.} After \cd{b = a}, both names point to \emph{the same} list, so \cd{b.append(1)} also changes what you see through \cd{a}. This matters in section 1d.
+
+\subsection{Functions}
+
+\begin{py}
+def greet(name: str, greeting: str = "Hello") -> str:
+	return f"{greeting} {name}"
+
+greet("Maren")                    # 'Hello Maren'
+greet("Maren", greeting="Hi")     # keyword argument: 'Hi Maren'
+\end{py}
+
+\begin{itemize}
+\item \cd{greeting: str = "Hello"} is a \textbf{default value}: the argument may be left out.
+\item Arguments can be passed by position or by name (\textbf{keyword arguments}). Reflex and FastAPI use keyword arguments everywhere: \cd{rx.el.button("save", on_click=...)}.
+\item Functions are values too. You can store a function in a variable or pass it to another function without calling it: \cd{button(on_click=State.click_left)} passes the handler itself, and Reflex calls it later.
+\end{itemize}
+
+\subsection{Unpacking with * and **}
+
+\begin{py}
+numbers = [1, 2, 3]
+print(*numbers)            # same as print(1, 2, 3)
+
+data = {"name": "Maren", "greeting": "Hi"}
+greet(**data)              # same as greet(name="Maren", greeting="Hi")
+\end{py}
+
+\begin{itemize}
+\item \cd{*list} spreads a list into separate \emph{positional} arguments.
+\item \cd{**dict} spreads a dict into separate \emph{keyword} arguments, one per key.
+\end{itemize}
+
+You will use \cd{*} to pass a list of components as children (\cd{rx.fragment(*[part(p) for p in parts])}), and \cd{**} to build objects from JSON in chapter 2 (\cd{Note(**data)}).
+
+\subsection{Comprehensions}
+
+A \textbf{list comprehension} builds a new list from another one in one expression:
+
+\begin{py}
+numbers = [1, 2, 3, 4]
+[n * 10 for n in numbers]               # [10, 20, 30, 40]
+[n for n in numbers if n % 2 == 0]      # [2, 4]: only items that pass the test
+\end{py}
+
+Read it as: ``\cd{n * 10}, for every \cd{n} in \cd{numbers}''. It replaces the JavaScript methods \cd{map} (transform every item) and \cd{filter} (keep some items). Without the square brackets, \cd{(n * 10 for n in numbers)} is a \textbf{generator expression}: it produces the values one at a time instead of building a list, which is enough when you pass them straight to a function like \cd{sum(...)}.
+
+\subsection{Lambdas}
+
+\begin{py}
+double = lambda n: n * 2
+double(4)                                 # 8
+sorted(["bb", "a", "ccc"], key=lambda s: len(s))   # ['a', 'bb', 'ccc']
+\end{py}
+
+A \textbf{lambda} is a small function without a name, made of a single expression. \cd{lambda n: n * 2} means ``given \cd{n}, return \cd{n * 2}''. It is handy when a function is needed only in one place, usually as an argument to another function. Reflex uses lambdas to pass arguments to event handlers (chapter 2).
+
+\subsection{Classes, objects and self}
+
+\begin{py}
+class Counter:
+	def __init__(self, start: int):
+		self.value = start
+
+	def increase(self) -> None:
+		self.value += 1
+
+
+c = Counter(5)       # create an object: Python calls __init__(c, 5)
+c.increase()         # Python calls Counter.increase(c)
+c.value              # 6
+\end{py}
+
+A \textbf{class} is a blueprint, and every \textbf{object} (instance) made from it has its own data. \cd{self} is the object a method was called on: \cd{c.increase()} becomes \cd{Counter.increase(c)}, so inside the method \cd{self} is \cd{c}. A class can \textbf{inherit} from another class, \cd{class NoteState(rx.State):}, which gives it everything the parent class has. Libraries use this a lot: you write a small class, and the parent class adds the machinery.
+
+\subsection{Decorators}
+
+\begin{py}
+@rx.event
+def click_left(self):
+	...
+\end{py}
+
+A \textbf{decorator} is the \cd{@something} line above a function. It is a short way to write:
+
+\begin{py}
+def click_left(self):
+	...
+click_left = rx.event(click_left)
+\end{py}
+
+The function is passed to \cd{something}, and the name now points to whatever \cd{something} returned. Libraries use decorators to \emph{register} a function (``this function is an event handler'', ``this function answers \cd{GET /api/notes}'') or to change how it behaves.
+
+\subsection{Typed dictionaries and dataclasses}
+
+For data with a fixed shape, two tools describe the shape so that Pylance can check it:
+
+\begin{py}
+from typing import TypedDict
+from dataclasses import dataclass
+
+
+class Part(TypedDict):          # a dict that must have these keys
+	name: str
+	exercises: int
+
+
+@dataclass
+class Note:                      # a small class that just holds data
+	id: str
+	content: str
+	important: bool
+
+
+p: Part = {"name": "State", "exercises": 14}
+p["name"]                        # read like a dict
+
+n = Note(id="1", content="HTML is easy", important=True)
+n.content                        # read like an object
+\end{py}
+
+\begin{itemize}
+\item A \textbf{TypedDict} is still an ordinary dict at runtime. It only tells Pylance which keys exist and what types their values have, so a typo like \cd{p["nmae"]} is flagged.
+\item \cd{@dataclass} writes \cd{__init__} (and a readable \cd{print} output, and \cd{==} that compares the fields) for you, based on the annotated fields.
+\end{itemize}
+
+\subsection{Exceptions and tracebacks}
+
+When something goes wrong while Python runs, it doesn't just stop: it \textbf{raises an exception}, an object that describes the problem. Its type names the kind of problem (\cd{KeyError}, \cd{TypeError}, \cd{ZeroDivisionError}, \ldots) and it carries a message.
+
+\begin{py}
+parts = {"name": "State"}
+parts["exercises"]           # KeyError: 'exercises'
+\end{py}
+
+An exception travels \emph{up} through the functions that called each other, until some code \textbf{catches} it. If nothing catches it, the program stops and prints a \textbf{traceback}: the chain of calls that led there, oldest at the top, and the exception at the very bottom.
+
+\begin{code}
+Traceback (most recent call last):
+  File "app.py", line 9, in <module>
+    show(parts)
+  File "app.py", line 5, in show
+    print(parts["exercises"])
+          ~~~~~^^^^^^^^^^^^^
+KeyError: 'exercises'
+\end{code}
+
+Read a traceback \textbf{from the bottom up}: the last line says what happened, and the line above it says where, in which file and on which line. The lines higher up show how the program got there.
+
+\textbf{Catching} an exception lets your code react instead of stopping:
+
+\begin{py}
+try:
+	count = parts["exercises"]
+except KeyError:
+	count = 0
+\end{py}
+
+The code in \cd{try} runs normally. If an exception of the listed type is raised inside it (or inside any function it calls), Python jumps straight to the \cd{except} block; the rest of the \cd{try} block is skipped. Exceptions of other types keep travelling up.
+
+\textbf{Raising} one yourself is how your own code reports a problem:
+
+\begin{py}
+def average(numbers: list[float]) -> float:
+	if len(numbers) == 0:
+		raise ValueError("can't average an empty list")
+	return sum(numbers) / len(numbers)
+\end{py}
+
+A \cd{finally} block runs whether or not an exception happened, which makes it the place for cleanup that must always happen:
+
+\begin{py}
+try:
+	work()
+finally:
+	print("always printed, even if work() raised an exception")
+\end{py}
+
+Libraries use exceptions all the time to report failures: httpx raises one for a failed request (chapter 2), FastAPI turns one into an error response (chapter 3), and a test fails because an exception was raised (chapter 4).
+
+\subsection{with blocks}
+
+Some things must be undone after use: a file must be closed, a network connection released. Forgetting it, or skipping it because an exception jumped past the cleanup line, leaks resources. The \cd{with} statement makes the cleanup automatic:
+
+\begin{py}
+with open("notes.txt") as f:
+	text = f.read()
+# here the file is already closed, even if read() raised an exception
+\end{py}
+
+How it works: the object after \cd{with} (here, the file returned by \cd{open(...)}) is a \textbf{context manager}, an object with two special methods. Python calls the first one, \cd{__enter__}, when the block starts; what it returns is bound to the name after \cd{as}. When the block ends, for any reason, normally or through an exception, Python calls the second one, \cd{__exit__}, which does the cleanup. It's a \cd{try}/\cd{finally} packaged inside the object. You'll meet \cd{with} for network clients in chapter 2 and database sessions in chapter 3.
+
+\subsection{Generators and yield}
+
+A normal function runs from start to \cd{return} in one go. A function that contains \cd{yield} is different: it's a \textbf{generator function}, and it can pause in the middle.
+
+\begin{py}
+def three_steps():
+	print("step 1")
+	yield "a"
+	print("step 2")
+	yield "b"
+	print("step 3")
+
+
+gen = three_steps()   # nothing is printed: the body hasn't started
+next(gen)             # prints "step 1", then pauses at the first yield and returns "a"
+next(gen)             # continues after that yield: prints "step 2", returns "b"
+next(gen)             # prints "step 3", reaches the end: raises StopIteration
+\end{py}
+
+How it works:
+\begin{itemize}
+\item Calling a generator function doesn't run it. It returns a \textbf{generator object}, a paused copy of the function.
+\item Each \cd{next(gen)} resumes the body until the next \cd{yield}, hands out the value after \cd{yield}, and freezes again, keeping all its local variables.
+\item When the body ends, the generator raises \cd{StopIteration} to say ``nothing more''. A \cd{for} loop calls \cd{next} for you and stops at \cd{StopIteration}, so \cd{for x in three_steps():} gets \cd{"a"} and \cd{"b"}.
+\end{itemize}
+
+Generator expressions, \cd{(n * 10 for n in numbers)}, are a short way to write a generator. Chapter 3 uses a generator function in a clever way: code before \cd{yield} sets something up, the yielded value is used by someone else, and code after \cd{yield} cleans up when the generator is resumed.
+
+\subsection{Modules and imports}
+
+Every \cd{.py} file is a \textbf{module}, and a folder of modules is a \textbf{package}. \cd{import random} loads a module; \cd{from random import randint} takes one name out of it. Python finds modules by searching a list of folders called \cd{sys.path} (chapter 4a explains this in detail). Inside a package, a leading dot means ``in this same package'': \cd{from .models import Note}.
+
+\subsection{Exercises 1.3--1.5}
+
+\begin{exercise}{1.3: Course information, step 3}
+Move from separate variables to dicts. Each part becomes a dict with \cd{name} and \cd{exercises}, for example \cd{part1 = {"name": "Fundamentals of Reflex", "exercises": 10}}. Pass the dicts to your components.
+\end{exercise}
+
+\begin{exercise}{1.4: Course information, step 4}
+Put the parts in a list, \cd{parts = [part1, part2, part3]}, and pass the whole list to \cd{content} and \cd{total}. In \cd{content}, build the children with a list comprehension and pass them with \cd{*}. In \cd{total}, compute the sum from the list.
+\end{exercise}
+
+\begin{exercise}{1.5: Course information, step 5}
+Make the course one dict, \cd{{"name": ..., "parts": [...]}}, and pass it from \cd{index}. Describe the shapes with \cd{TypedDict} classes \cd{Part} and \cd{Course}, and use them in the type hints of your components.
+\end{exercise}
+
+%=====================================================================
+\section{c. Component state, event handlers}
+
+So far every page has been fixed. Interactive pages need data that changes while the app runs: a counter, a list of notes, the text in an input field. That data is the app's \textbf{state}.
+
+\subsection{A state class}
+
+\begin{py}
+import reflex as rx
+
+
+class CounterState(rx.State):
+	count: rx.Field[int] = rx.field(0)
+
+	@rx.event
+	def increase(self):
+		self.count += 1
+
+	@rx.event
+	def reset(self):
+		self.count = 0
+
+
+def index() -> rx.Component:
+	return rx.el.div(
+		rx.el.div(CounterState.count),
+		rx.el.button("plus", on_click=CounterState.increase),
+		rx.el.button("zero", on_click=CounterState.reset),
+	)
+
+
+app = rx.App()
+app.add_page(index)
+\end{py}
+
+\begin{itemize}
+\item A state is a class that inherits from \cd{rx.State}.
+\item \cd{count: rx.Field[int] = rx.field(0)} declares a \textbf{state variable}, here an \cd{int} that starts at 0. \cd{rx.Field[int]} is the type hint Reflex reads to know what kind of value \cd{count} holds; \cd{rx.field(0)} gives the starting value.
+\item A method marked with \cd{@rx.event} is an \textbf{event handler}: the only place where state may change. Inside it, \cd{self.count} is a normal Python \cd{int}.
+\item \cd{on_click=CounterState.increase} connects the button's click event to the handler. Note that it has no parentheses: you pass the handler, you don't call it.
+\end{itemize}
+
+\textbf{Each browser tab gets its own copy of the state.} Open the page in two tabs and click in one: the other doesn't change. Reflex creates a separate state object per tab, keyed by a token the page sends when it connects.
+
+\subsection{What happens when you click}
+
+\begin{enumerate}
+\item The browser sends a small message over the WebSocket: ``event \cd{increase} of \cd{CounterState}, from tab X''.
+\item The Reflex backend finds that tab's state object and calls \cd{increase(self)}. Your Python code runs on the server.
+\item When the handler returns, Reflex checks which state variables changed and sends only those back to the browser, as a \textbf{delta}: \cd{{"count": 1}}.
+\item The React code in the browser updates its copy of \cd{count}, and every part of the page that shows \cd{count} redraws.
+\end{enumerate}
+
+That is why the page updates without a reload, and also why every click is a small network round trip. Chapter 2b shows a case where this matters.
+
+\subsection{Vars: why CounterState.count is not a number}
+
+Inside a handler, \cd{self.count} is an \cd{int}. But in a component, \cd{CounterState.count} is something else: a \textbf{Var}. Remember that component functions run \emph{once}, at compile time, when there is no user and no value yet. A Var is a placeholder that says ``the value of \cd{count}, whatever it is at the time''. Reflex compiles it into a JavaScript expression that reads the current value in the browser.
+
+You can see this in a Python shell with the app's state imported:
+
+\begin{py}
+str(CounterState.count)        # something like 'reflex___..._counter_state.count_rx_state_'
+str(CounterState.count + 1)    # '(reflex___...count_rx_state_ + 1)'
+\end{py}
+
+\cd{CounterState.count + 1} doesn't add anything: it builds a new Var whose JavaScript adds 1 in the browser. This explains the rules for working with Vars in components:
+
+\begin{itemize}
+\item \textbf{Operators build Vars.} \cd{+}, \cd{-}, \cd{*}, \cd{/}, \cd{==}, \cd{>}, indexing \cd{[i]} and attribute access work, and produce new Vars.
+\item \textbf{f-strings work.} \cd{f"total is {CounterState.count}"} becomes a JavaScript template string. (Python formats the Var into a special marker that Reflex recognises when compiling.)
+\item \textbf{Python decisions don't work.} \cd{if CounterState.count > 0:} would need the actual value at compile time, which doesn't exist. Reflex raises \cd{VarTypeError: Cannot convert Var ... to bool for use with if, and, or, and not}. Use \cd{rx.cond} instead (section 1d).
+\item \textbf{Built-in functions don't work.} \cd{len(State.items)} raises \cd{TypeError}, because Python's \cd{len} needs a real list. Vars have their own methods instead: \cd{State.items.length()}.
+\end{itemize}
+
+When an expression gets complicated, or needs Python functions like \cd{max} or \cd{list.index}, do it in Python with a computed var.
+
+\subsection{Computed vars}
+
+\begin{py}
+class ClickState(rx.State):
+	left: rx.Field[int] = rx.field(0)
+	right: rx.Field[int] = rx.field(0)
+
+	@rx.var
+	def total(self) -> int:
+		return self.left + self.right
+\end{py}
+
+A method marked with \cd{@rx.var} is a \textbf{computed var}: a value derived from other state variables. It runs on the server, as ordinary Python, so \cd{if}, \cd{len}, \cd{max} and everything else are allowed. In a component you use it like any other Var, \cd{ClickState.total}. Reflex recomputes it after every event and sends the new value to the browser when it changed.
+
+The return type hint (\cd{-> int}) is required: it is how Reflex knows the type of the Var it creates.
+
+Use a computed var whenever a value can be \emph{derived} from the state, instead of storing it separately. If you stored \cd{total} as its own field, every handler would have to remember to update it, and sooner or later one would forget.
+
+\subsection{Passing handlers to child components}
+
+Handlers can be passed to your own components like any other value:
+
+\begin{py}
+def button(text: str, on_click) -> rx.Component:
+	return rx.el.button(text, on_click=on_click)
+
+
+def index() -> rx.Component:
+	return rx.el.div(
+		ClickState.left,
+		button("left", ClickState.click_left),
+		button("right", ClickState.click_right),
+		ClickState.right,
+	)
+\end{py}
+
+\cd{button} doesn't know anything about \cd{ClickState}. It just attaches whatever handler it was given. Components that receive both data and handlers through parameters are reusable, which is the point of splitting a page into components.
+
+%=====================================================================
+\section{d. A more complex state, debugging Reflex apps}
+
+\subsection{Several pieces of state}
+
+A state class can hold as many variables as you need, of any JSON-compatible type: numbers, strings, booleans, lists, dicts, dataclasses.
+
+\begin{py}
+class ClickState(rx.State):
+	left: rx.Field[int] = rx.field(0)
+	right: rx.Field[int] = rx.field(0)
+	all_clicks: rx.Field[list[str]] = rx.field(default_factory=list)
+
+	@rx.event
+	def click_left(self):
+		self.all_clicks.append("L")
+		self.left += 1
+
+	@rx.event
+	def click_right(self):
+		self.all_clicks.append("R")
+		self.right += 1
+\end{py}
+
+\textbf{Why default\_factory.} \cd{rx.field(default_factory=list)} means ``call \cd{list()} to make a \emph{new} empty list whenever a new state object is created''. Writing \cd{rx.field([])} would create one list when the class is defined; the rule borrowed from Python's dataclasses is that mutable defaults (lists, dicts) are made with a factory so that no two objects can end up sharing one. This book uses \cd{default_factory} for every list and dict.
+
+\textbf{Changing a list in place.} \cd{self.all_clicks.append("L")} changes the list without assigning a new one. Reflex still notices: inside a handler, a state's lists and dicts are wrapped in objects that record every change. So both styles work:
+
+\begin{py}
+self.all_clicks.append("L")                  # change in place
+self.all_clicks = self.all_clicks + ["L"]    # build a new list and assign it
+\end{py}
+
+\subsection{Conditional rendering with rx.cond}
+
+Since \cd{if} can't test a Var, Reflex has a component that decides in the browser:
+
+\begin{py}
+from collections.abc import Sequence
+
+
+def history(all_clicks: rx.vars.ArrayVar[Sequence[str]]) -> rx.Component:
+	return rx.cond(
+		all_clicks.length() == 0,
+		rx.el.div("the app is used by pressing the buttons"),
+		rx.el.div("button press history: ", all_clicks.join(" ")),
+	)
+\end{py}
+
+\cd{rx.cond(condition, a, b)} shows \cd{a} when the condition is true and \cd{b} otherwise. Both \cd{a} and \cd{b} are compiled into the page; the browser picks one each time the state changes. The third argument is optional: without it, nothing is shown when the condition is false.
+
+\begin{itemize}
+\item \cd{all_clicks.length()} and \cd{all_clicks.join(" ")} are Var methods, the browser-side versions of \cd{len(...)} and \cd{" ".join(...)}.
+\item A Var can be used directly as a condition: an empty string, \cd{0}, an empty list and \cd{None} count as false. \cd{rx.cond(State.error_message, ...)} shows something only when there is a message.
+\item To combine conditions, use \cd{&} (and), \cd{|} (or) and \texttt{\textasciitilde} (not), with parentheses: \cd{(items.length() >= 2) & (items.length() <= 10)}. The words \cd{and}/\cd{or}/\cd{not} would need a Python \cd{bool} and raise \cd{VarTypeError}.
+\end{itemize}
+
+\textbf{About the type hint.} A list state variable becomes an \cd{rx.vars.ArrayVar}. Reflex describes its contents with the wider type \cd{Sequence} rather than \cd{list}, so Pylance expects \cd{ArrayVar[Sequence[str]]}. Hints on component parameters are only for Pylance; they don't change what the code does.
+
+\subsection{Debugging}
+
+Your code now runs in two places, and each has its own tools.
+
+\textbf{Handlers and computed vars run on the server.} \cd{print(...)} inside a handler prints in the terminal where \cd{reflex run} runs, not in the browser. Errors in handlers show up there as a traceback: read it from the bottom, which names the exception, upwards to the line in your file.
+
+\textbf{Component functions run once, at compile time.} A \cd{print} in a component prints once, when the app compiles, and shows Vars as their JavaScript names, not as values. If a component raises an error, the app doesn't start at all; the traceback is again in the terminal.
+
+\textbf{The browser has developer tools.} Press F12. The \emph{Console} tab shows JavaScript errors, and the \emph{Network} tab shows every request; the WebSocket connection is listed there, and its \emph{Messages} view shows the events going up and the deltas coming down.
+
+Keep the terminal and the browser console visible while you work, and add prints generously when something doesn't behave. The original course says it as a rule: \emph{the first thing to do when the code doesn't work is to find out what the values actually are.}
+
+\subsection{Exercises 1.6--1.14}
+
+\begin{exercise}{1.6: unicafe, step 1}
+Create \cd{chapter1/unicafe}: a feedback app for a café. It has three buttons, \cd{good}, \cd{neutral} and \cd{bad}, and shows how many times each was clicked. Keep the three counts in a state class, with one handler per button.
+\end{exercise}
+
+\begin{exercise}{1.7: unicafe, step 2}
+Also show the total number of votes, the average score (good = 1, neutral = 0, bad = $-1$) and the percentage of positive votes. Use computed vars. Make sure nothing divides by zero before the first vote.
+\end{exercise}
+
+\begin{exercise}{1.8: unicafe, step 3}
+Move the statistics into their own component, \cd{statistics}.
+\end{exercise}
+
+\begin{exercise}{1.9: unicafe, step 4}
+Show the statistics only after the first vote. Before that, show the text \cd{no feedback given}. Use \cd{rx.cond}.
+\end{exercise}
+
+\begin{exercise}{1.10: unicafe, step 5}
+Extract two more components: \cd{button}, which receives a text and a handler, and \cd{statistic_line}, which shows one statistic (for example ``good 6''). \cd{statistics} uses \cd{statistic_line} for each line.
+\end{exercise}
+
+\begin{exercise}{1.11*: unicafe, step 6}
+Show the statistics in an HTML table: \cd{rx.el.table}, \cd{rx.el.tbody}, and one \cd{rx.el.tr} row per statistic with two \cd{rx.el.td} cells. Show the positive percentage with a \icode|%| sign.
+\end{exercise}
+
+\begin{exercise}{1.12*: anecdotes, step 1}
+Create \cd{chapter1/anecdotes} with this list at the top of the file:
+
+\begin{py}
+ANECDOTES = [
+	"If it hurts, do it more often.",
+	"Adding manpower to a late software project makes it later!",
+	"Any fool can write code that a computer can understand. Good programmers write code that humans can understand.",
+	"Premature optimization is the root of all evil.",
+	"Debugging is twice as hard as writing the code in the first place. Therefore, if you write the code as cleverly as possible, you are, by definition, not smart enough to debug it.",
+	"The only way to go fast, is to go well.",
+]
+\end{py}
+
+Show one anecdote and a button \cd{next anecdote} that picks a random one. \cd{random.randint(a, b)} returns a random integer between \cd{a} and \cd{b}, both included. Keep the index of the selected anecdote in the state, and show the anecdote through a computed var.
+\end{exercise}
+
+\begin{exercise}{1.13*: anecdotes, step 2}
+Add a \cd{vote} button and show how many votes the shown anecdote has. Keep the votes in a list of numbers in the state, one per anecdote, starting at zero. (\cd{[0 for _ in range(len(ANECDOTES))]} builds such a list; \cd{_} is the conventional name for a loop variable you don't use.)
+\end{exercise}
+
+\begin{exercise}{1.14*: anecdotes, step 3}
+Also show the anecdote with the most votes. If several share the top, showing any one of them is fine. \cd{max(list)} returns the biggest item and \cd{list.index(value)} returns the position of the first item equal to \cd{value}; both need a computed var.
+\end{exercise}

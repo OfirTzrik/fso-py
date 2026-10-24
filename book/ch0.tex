@@ -1,0 +1,236 @@
+\chapter{Before you start}
+
+\section{What this book is}
+
+\emph{Full Stack Open} is a free course from the University of Helsinki that teaches modern web development with JavaScript: React in the browser, Node.js and Express on the server, MongoDB as the database. This book follows the same path, chapter by chapter and exercise by exercise, but every part of the stack is Python:
+
+\begin{center}
+\begin{tabularx}{0.92\textwidth}{@{}lXX@{}}
+\toprule
+\textbf{Job} & \textbf{Original course} & \textbf{This book} \\
+\midrule
+Frontend (what the user sees) & React & Reflex \\
+Talking to servers & axios & httpx \\
+Backend (the server) & Node.js + Express & FastAPI + uvicorn \\
+Validating data & Mongoose schemas & Pydantic \\
+Database & MongoDB (Atlas) & PostgreSQL (Neon) + SQLAlchemy \\
+Hosting & Render / Fly.io & Render \\
+Linting & ESLint & Ruff \\
+Testing & node:test + supertest & pytest + FastAPI's \cd{TestClient} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+A \textbf{full stack} developer works on all of these layers. Each chapter is split into lettered sections (1a, 1b, \ldots). Every section explains something new and ends with exercises. Exercises marked with a star (*) are harder; you can skip them and still continue.
+
+\section{How the pieces fit together}
+
+By the end of chapter 3 your apps look like this:
+
+\begin{code}
+Browser ──WebSocket──> Reflex backend ──HTTP + JSON──> FastAPI backend ──SQL──> PostgreSQL
+(the page)            (your state and handlers)        (your routes)            (the data)
+└────────── the Reflex app ───────────┘              └─ the backend ─┘
+\end{code}
+
+\begin{itemize}
+\item The \textbf{browser} shows the page and reports clicks and typing.
+\item The \textbf{Reflex backend} runs your Python state and event handlers. It is part of the frontend app: Reflex apps always have a small server of their own.
+\item The \textbf{FastAPI backend} is a separate program. It receives HTTP requests, checks them, and reads or writes the database.
+\item \textbf{PostgreSQL} stores the data permanently.
+\end{itemize}
+
+Each part has one job and can be replaced on its own. In chapter 3 you will switch the frontend from a fake server to your own FastAPI server by changing one URL, and later switch the backend from a Python list to PostgreSQL without touching the frontend at all.
+
+
+\section{Libraries, frameworks and tools}
+
+Almost nothing in this book is written from zero. Most of the work is done by code other people wrote and published, which you install and use. It helps to know the words for it.
+
+\begin{itemize}
+\item A \textbf{library} is code you \emph{call}. You decide when to use it. Example: \cd{httpx.get(url)} sends one HTTP request when your code asks for it, and then your code continues.
+\item A \textbf{framework} is code that \emph{calls you}. It owns the main loop of the program, and you fill in pieces it calls at the right moment. Example: in FastAPI you write a function for \cd{GET /api/notes}, but you never call it yourself; FastAPI calls it every time such a request arrives. This is sometimes called ``don't call us, we'll call you''.
+\item A \textbf{tool} is a program you run while developing, not part of the app itself: Ruff checks your code, pytest runs your tests, Git records your history.
+\item A \textbf{service} is something run by a company on its own computers, which you use over the internet: Render runs your apps, Neon runs your database, GitHub stores your repository.
+\end{itemize}
+
+Every one of them exists because doing the job by hand is long, repetitive and easy to get wrong. The table below says what problem each one solves. You don't need to understand it all now; each is explained from scratch in the chapter where it first appears.
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}l l X@{}}
+\toprule
+\textbf{Name} & \textbf{Kind} & \textbf{The problem it solves} \\
+\midrule
+Reflex & framework & Building an interactive web page normally needs JavaScript. Reflex lets you write the page and its behaviour in Python, and produces the JavaScript for you (chapter 1). \\
+httpx & library & Sending an HTTP request means opening a network connection and writing the request text in the exact format HTTP expects. httpx does that, and turns the reply into Python data (chapter 2). \\
+FastAPI & framework & A server must read raw requests, decide which code answers which URL, check the incoming data and write correct responses. FastAPI does all of that; you only write what each URL should do (chapter 3). \\
+uvicorn & program & Something has to listen on a network port and pass every incoming request to your FastAPI code. That's uvicorn (chapter 3). \\
+Pydantic & library & Data from outside (a request body, a JSON reply) can be missing fields or have wrong types. Pydantic checks data against a description you write as a Python class (chapter 3). \\
+PostgreSQL & program & Keeping data safe on disk, shared by many users at once, without corrupting it. A database server does this (chapter 3c). \\
+SQLAlchemy & library & Talking to a database means writing SQL text and converting the rows that come back into Python objects. SQLAlchemy writes the SQL from Python code and does the converting (chapter 3c). \\
+psycopg & library & The low-level part that actually opens the network connection to PostgreSQL and speaks its protocol. SQLAlchemy uses it underneath (chapter 3c). \\
+python-dotenv & library & Loading secret settings from a file instead of typing them into every terminal (chapter 3c). \\
+pytest & tool & Running your test functions, and reporting clearly which ones failed and why (chapter 4). \\
+Ruff & tool & Finding likely mistakes without running the code, and keeping the formatting consistent (chapter 3d). \\
+Docker & tool & Running programs such as PostgreSQL in an isolated box without installing them on your system (chapter 4b). \\
+Git, GitHub & tool, service & Recording the history of your code, and storing it online (this chapter). \\
+Render, Neon & services & Running your apps and your database on the internet (chapter 3). \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\section{Setting up your machine}
+
+\subsection{The terminal}
+
+Most work in this book starts by typing a command in a \textbf{terminal}. A terminal is a window with a text prompt, and the program behind it that reads your commands is the \textbf{shell} (on Ubuntu usually \emph{bash}). You type one line, press Enter, the shell runs it, prints the result, and shows the prompt again.
+
+\textbf{The working directory.} The shell is always ``in'' one folder, its \textbf{current working directory}. Commands that take file names look for them there. Many prompts show it, for example \texttt{\textasciitilde/dev/fso-py\$}, where \texttt{\textasciitilde} means your home folder.
+
+\begin{code}
+pwd                  print the working directory
+ls                   list the files in it
+ls -a                also list hidden files (names starting with a dot, like .env)
+cd chapter3          go into the folder chapter3
+cd ..                go up one folder (.. always means "the folder above")
+cd                   go back to your home folder
+mkdir notes          create a folder
+\end{code}
+
+A path that starts with \cd{/} is \textbf{absolute} (it starts from the top of the disk). Any other path is \textbf{relative} to the working directory. That's why the book often says ``from the repo root'' or ``from the \cd{notes_backend} folder'': the same command can mean different files depending on where you run it.
+
+\textbf{Running a program.} A command is a program name followed by \textbf{arguments}, separated by spaces:
+
+\begin{code}
+uvicorn main:app --reload --port 3001
+\end{code}
+
+Here the program is \cd{uvicorn}, and it receives three arguments: \cd{main:app}, \cd{--reload}, and \cd{--port 3001}. Arguments that start with dashes are \textbf{options} (or flags) that change how the program behaves; some take a value after them. Every program decides for itself which arguments it understands; \cd{program --help} usually lists them. An argument that contains spaces must be quoted, \cd{"Noor Haddad"}, otherwise the shell splits it into two.
+
+A program that keeps running, like a server, keeps the terminal busy. \textbf{Ctrl+C} stops it. Open a second terminal (or a second tab) to run another command at the same time; you'll often have a backend in one terminal and a frontend in another.
+
+\textbf{Environment variables.} Every running program receives a set of name--value pairs from the shell that started it, called \textbf{environment variables}. They're used for settings that shouldn't be written into the code, such as a password or the address of a server. In bash:
+
+\begin{code}
+export GREETING=hello     set a variable for this terminal and every program started from it
+echo $GREETING            the shell replaces $GREETING with its value before running echo: prints hello
+\end{code}
+
+The \icode|$NAME| replacement happens in the shell, before the program even starts. So in \icode|uvicorn --port $PORT|, uvicorn never sees the text \icode|$PORT|; it receives the number. Variables set with \cd{export} disappear when the terminal closes. Chapter 2e shows how Python reads them, and chapter 3c how to keep them in a file.
+
+\textbf{How the shell finds programs: PATH.} When you type \cd{uvicorn}, the shell looks for a program file with that name in a list of folders stored in the environment variable \cd{PATH}, in order, and runs the first one it finds. \cd{which uvicorn} shows which file that is. This is exactly what activating a virtual environment changes, as the next section explains.
+
+\subsection{Python and virtual environments}
+
+You need Python 3.13. Check it with \cd{python3 --version}.
+
+Python packages (Reflex, FastAPI, \ldots) are installed with \textbf{pip}. If you install them globally, every project on your computer shares one set of versions, and upgrading a package for one project can break another. A \textbf{virtual environment} (venv) solves this: it is a folder that contains its own Python interpreter and its own packages.
+
+Create one at the root of your course repository and \emph{activate} it:
+
+\begin{code}
+python3 -m venv .venv
+source .venv/bin/activate
+\end{code}
+
+\begin{itemize}
+\item \cd{python3 -m venv .venv} runs Python's built-in \cd{venv} module, which creates the folder \cd{.venv}.
+\item \cd{source .venv/bin/activate} puts the folder \cd{.venv/bin} at the \emph{front} of your terminal's \cd{PATH}. From then on, when you type \cd{python}, \cd{pip}, or any program a package installed (\cd{uvicorn}, \cd{reflex}, \cd{pytest}), the shell finds the copy inside \cd{.venv} first. Your prompt shows \cd{(.venv)} while it is active. Every new terminal needs this line again.
+\item \cd{deactivate} switches back.
+\end{itemize}
+
+From now on, \cd{pip install something} puts packages inside the \cd{.venv} folder. The folder is never committed to Git (it is in \cd{.gitignore}): anyone can recreate it from a list of package versions.
+
+\subsection{requirements.txt}
+
+That list is \cd{requirements.txt}: one package per line, with an exact version.
+
+\begin{code}
+pip freeze > requirements.txt      # write every installed package and its version
+pip install -r requirements.txt    # install everything listed in the file
+\end{code}
+
+Exact versions (\cd{fastapi==0.142.2}) matter: when your app is deployed, the server installs exactly what you tested with. Each app in this book gets its own short \cd{requirements.txt} with only the packages it needs, because the hosting service installs that file.
+
+\subsection{Git: recording the history of your code}
+
+\textbf{The problem.} You change ten files, and the app stops working. Which change broke it? What did the code look like yesterday, when it worked? Copying the project folder by hand every day doesn't scale. A \textbf{version control system} records the history of a project for you, as a series of snapshots, and lets you compare any two of them or go back to one. \textbf{Git} is the one almost everyone uses.
+
+\textbf{A repository} is a project folder whose history Git tracks. The history itself lives in a hidden folder named \cd{.git} inside it; everything else in the folder is your \textbf{working tree}, the files as they are right now.
+
+\textbf{A commit} is one snapshot of the project, plus a message saying what changed, the author and the time. Each commit points to the one before it, so the commits form the history. A commit is identified by a long hexadecimal code, its \textbf{hash}, usually shown shortened (\cd{fae5878}).
+
+\textbf{The staging area.} Git doesn't put every change into the next commit automatically. You first choose which changes belong in it by \emph{staging} them. So there are three places a change can be:
+
+\begin{code}
+working tree  ──git add──>  staging area  ──git commit──>  history
+(your files)                (the next commit)              (all commits, kept forever)
+\end{code}
+
+Choosing lets you make commits that each do one thing, even if you changed several unrelated things at once.
+
+\begin{code}
+git init                      turn the current folder into a repository (once)
+git status                    which files changed, and which changes are staged
+git diff                      the exact lines you changed but haven't staged yet
+git add main.py               stage the changes in one file
+git add .                     stage every change in the current folder and below
+git commit -m "add notes API" create a commit from the staged changes, with a message
+git log --oneline             list the commits, newest first
+\end{code}
+
+Write commit messages that say what changed (``add PATCH route for persons''), and commit often: a small commit is easy to understand, and easy to undo.
+
+\textbf{.gitignore} is a text file listing names and patterns Git should never track: generated folders (\cd{.venv/}, \cd{.web/}, \cd{__pycache__/}) and files with secrets (\cd{.env}). Ignored files don't appear in \cd{git status} and can't be staged by accident with \cd{git add .}.
+
+\textbf{GitHub, remotes and push.} Your repository lives on your computer. \textbf{GitHub} is a service that stores a copy of it online: a \textbf{remote} repository. After you create an empty repository on GitHub and connect yours to it once (GitHub shows the exact \cd{git remote add origin ...} command), you send your new commits there with:
+
+\begin{code}
+git push
+\end{code}
+
+Pushing copies your commits to GitHub; it never sends uncommitted changes. Hosting services such as Render (chapter 3) watch your GitHub repository and deploy a new version of your app on every push.
+
+\begin{warn}[Secrets stay in the history]
+Every commit is a full snapshot that Git keeps forever. If you commit a file containing a password and delete it in the next commit, the \emph{new} snapshot no longer contains it, but the \emph{old} one still does, and anyone with the repository can open that old commit. Once pushed to a public GitHub repository, consider the password public. That's why secrets go in files listed in \cd{.gitignore} from the start.
+\end{warn}
+
+\subsection{The repository layout}
+
+Keep all your work in one repository, with one folder per chapter:
+
+\begin{code}
+fso-py/
+├── .git/               ← Git's history (hidden)
+├── .venv/              ← the virtual environment (ignored by Git)
+├── .gitignore
+├── README.md
+├── requirements.txt    ← everything installed in .venv
+├── tools/              ← small helper programs (chapter 2)
+├── chapter1/
+├── chapter2/
+├── chapter3/
+└── chapter4/
+\end{code}
+
+\subsection{The editor}
+
+The book uses VS Code with the Python extension (which includes \textbf{Pylance}, a tool that checks your types while you write). Pylance's warnings are worth reading: several sections of this book start from one.
+
+Python uses indentation to decide which lines belong to a block. Tabs and spaces are different characters, and a file must not mix them in a way that could be read differently (chapter 4a explains exactly why). The code in this book is indented with tabs. To make VS Code always insert tabs in Python files, open \cd{.vscode/settings.json} and add:
+
+\begin{code}
+{
+    "[python]": {
+        "editor.insertSpaces": false,
+        "editor.detectIndentation": false
+    }
+}
+\end{code}
+
+\begin{itemize}
+\item \cd{insertSpaces: false}: the Tab key inserts a tab character.
+\item \cd{detectIndentation: false}: VS Code no longer guesses the style from what a file already contains. Without this, a new or almost empty file can silently switch to spaces.
+\end{itemize}
+
+The bottom-right corner of VS Code shows the current file's mode: ``Tab Size: 4'' means tabs, ``Spaces: 4'' means spaces.

@@ -1,0 +1,924 @@
+\chapter{Testing FastAPI apps and user administration}
+
+\textbf{Sections:} a. Project structure and intro to testing $\cdot$ b. Testing the backend $\cdot$ c. User administration $\cdot$ d. Token authentication
+
+This edition covers sections a and b.
+
+%=====================================================================
+\section{a. Project structure and intro to testing}
+
+\subsection{Why split the backend into more files}
+
+Your notes backend's \cd{main.py} holds three different kinds of code: the routes, the logging middleware, and the database error handler. As the app grows (users and login come later in this chapter), one file becomes hard to navigate. The fix is the same idea as in 3c, when you split out \cd{database.py}, \cd{models.py} and \cd{schemas.py}: \textbf{one job per file}.
+
+The new structure of \cd{chapter3/notes_backend}:
+
+\begin{code}
+notes_backend/
+├── .env
+├── requirements.txt
+├── pytest.ini          ← NEW: pytest settings
+├── main.py             ← CHANGED: only creates the app and wires the parts together
+├── database.py         (unchanged)
+├── models.py           (unchanged)
+├── schemas.py          (unchanged)
+├── middleware.py       ← NEW: log_requests and database_unavailable, moved from main.py
+├── routers/
+│   ├── __init__.py     ← NEW: empty file
+│   └── notes.py        ← NEW: the /api/notes routes, moved from main.py
+├── utils/
+│   ├── __init__.py     ← NEW: empty file
+│   └── for_testing.py  ← NEW: two small functions to practise testing on
+└── tests/
+    ├── test_reverse.py ← NEW
+    └── test_average.py ← NEW
+\end{code}
+
+Run uvicorn from the same folder as before (\cd{uvicorn main:app --reload --port 3001}).
+
+\textbf{What \_\_init\_\_.py is for.} A folder of Python files you import from is a \textbf{package}. An empty \cd{__init__.py} marks a folder as a \emph{regular} package. Python can import from a folder without one (a ``namespace package''), but then a package with the same name installed in your venv would win. \cd{utils} is a common name, so the empty file makes sure \cd{from utils...} finds \emph{your} folder.
+
+\subsection{Routers: routers/notes.py}
+
+An \textbf{APIRouter} is a group of routes that you later attach to the app. It works like \cd{app}: you write \cd{@router.get(...)} instead of \cd{@app.get(...)}.
+
+\textbf{New file} \cd{routers/notes.py}. \textbf{Move} all five note routes here from \cd{main.py}. Only two things change in each:
+\begin{enumerate}
+\item \cd{@app.} becomes \cd{@router.}.
+\item The path drops the \cd{/api/notes} start, because the router adds it (\cd{prefix}): \cd{"/api/notes"} becomes \cd{""}, and \cd{"/api/notes/{note_id}"} becomes \cd{"/{note_id}"}.
+\end{enumerate}
+
+The function bodies stay exactly the same.
+
+\begin{py}
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import get_db
+from models import Note
+from schemas import NoteCreate, NoteOut, NoteUpdate
+
+router = APIRouter(prefix="/api/notes")
+
+
+@router.get("")
+def get_notes(db: Session = Depends(get_db)) -> list[NoteOut]:
+	notes = db.scalars(select(Note)).all()
+	return [NoteOut.model_validate(n) for n in notes]
+
+
+@router.get("/{note_id}")
+def get_note(note_id: int, db: Session = Depends(get_db)) -> NoteOut:
+	...  # body unchanged
+
+
+@router.delete("/{note_id}", status_code=204)
+def delete_note(note_id: int, db: Session = Depends(get_db)) -> None:
+	...  # body unchanged
+
+
+@router.post("", status_code=201)
+def create_note(data: NoteCreate, db: Session = Depends(get_db)) -> NoteOut:
+	...  # body unchanged
+
+
+@router.patch("/{note_id}")
+def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)) -> NoteOut:
+	...  # body unchanged
+\end{py}
+
+\cd{prefix="/api/notes"} is put in front of every path in this router: \cd{@router.get("/{note_id}")} answers \cd{/api/notes/{note_id}}. The URLs don't change, so the frontend needs no changes. The root route \cd{/} stays in \cd{main.py}: its path doesn't fit under the prefix, and it belongs to the app as a whole.
+
+\subsection{Logging: middleware.py}
+
+Until now you logged with \cd{print}. Python has a built-in \textbf{logging} module, and it's the standard way for servers to log:
+\begin{itemize}
+\item \textbf{Levels.} Each message has a level: \cd{DEBUG}, \cd{INFO}, \cd{WARNING} or \cd{ERROR}. You choose in one place which levels are shown.
+\item \textbf{One place for the format.} Every message gets the same layout, set once.
+\end{itemize}
+
+\textbf{How logging works.} Three kinds of objects work together:
+\begin{itemize}
+\item A \textbf{logger} is what your code writes to. \cd{logging.getLogger(__name__)} gives a file its own logger, named after the module (\cd{__name__} is the module's name, here \cd{"middleware"}). Calling \cd{logger.info("...")} creates a \textbf{record}: the message, its level, the logger's name, the time.
+\item Loggers form a tree by name, and every logger passes its records up to the \textbf{root logger} at the top. So all the loggers in your app end up in one place.
+\item A \textbf{handler}, attached to a logger, decides where records go: the terminal, a file, a logging service. Each handler has a \textbf{formatter} that turns a record into a line of text.
+\end{itemize}
+
+A fresh program has no handlers at all, and \cd{INFO} messages are simply dropped. Python only has an emergency fallback that prints \cd{WARNING} and above. One call to \cd{logging.basicConfig} (in \cd{main.py}, below) sets the level and attaches one handler, which writes to the terminal, to the root logger. Because every logger passes its records up to the root, that one line configures logging for the whole app, including the logs of libraries you use. To send logs to a file later, you change the handler in one place, not every \cd{print}.
+
+\textbf{New file} \cd{middleware.py}. \textbf{Move} \cd{log_requests} and \cd{database_unavailable} here from \cd{main.py}, with three changes: the \cd{@app.middleware(...)} and \cd{@app.exception_handler(...)} lines are removed (there's no \cd{app} in this file, so \cd{main.py} registers the functions); \cd{print} becomes \cd{logger.info}/\cd{logger.error}; and \cd{request} in \cd{database_unavailable} gets the type \cd{Request}.
+
+\begin{py}
+import logging
+import time
+
+from fastapi import Request
+from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
+
+
+async def log_requests(request: Request, call_next):
+	start = time.perf_counter()
+	response = await call_next(request)
+	ms = (time.perf_counter() - start) * 1000
+	logger.info(f"{request.method} {request.url.path} {response.status_code} {ms:.1f} ms")
+	return response
+
+
+def database_unavailable(request: Request, exc):
+	logger.error(f"database error: {exc.orig}")
+	return JSONResponse(status_code=503, content={"detail": "database unavailable"})
+\end{py}
+
+\subsection{main.py: wiring it together}
+
+\textbf{Replace} the whole \cd{main.py} with:
+
+\begin{py}
+import logging
+
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from sqlalchemy.exc import OperationalError
+
+from database import Base, engine
+from middleware import database_unavailable, log_requests
+from routers import notes
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+Base.metadata.create_all(engine)
+
+app = FastAPI()
+
+app.middleware("http")(log_requests)
+app.add_exception_handler(OperationalError, database_unavailable)
+app.include_router(notes.router)
+
+
+@app.get("/", response_class=HTMLResponse)
+def root() -> str:
+	return "<h1>Hello World!</h1>"
+\end{py}
+
+Line by line:
+\begin{itemize}
+\item \cd{logging.basicConfig(...)} configures logging once, for the whole app. Its \cd{level} argument, \cd{logging.INFO}, shows \cd{INFO} and above, and \cd{DEBUG} is hidden. \cd{format} sets the layout, with placeholders that \cd{logging} fills in for each message: the level name and the message text.
+\item The \cd{app.middleware(...)} line registers the middleware. This is exactly what the decorator did before, because a decorator is just a function call (1b). These two do the same:
+\begin{py}
+@app.middleware("http")
+async def log_requests(request, call_next): ...
+
+async def log_requests(request, call_next): ...
+app.middleware("http")(log_requests)
+\end{py}
+Without \cd{@}, the function can live in another file.
+\item \cd{app.add_exception_handler(...)} does the same for the error handler. It is the non-decorator form of \cd{@app.exception_handler(OperationalError)}.
+\item \cd{app.include_router(notes.router)} attaches every route from the router to the app.
+\item \cd{from routers import notes} imports the \emph{module}, and \cd{notes.router} picks the router from it. In 4c you'll add \cd{routers/users.py}, which also has a variable named \cd{router}. Importing modules keeps the two apart: \cd{notes.router} and \cd{users.router}.
+\end{itemize}
+
+The server log now shows two lines per request:
+
+\begin{code}
+INFO: GET /api/notes 200 4.1 ms
+INFO:     127.0.0.1:53088 - "GET /api/notes HTTP/1.1" 200 OK
+\end{code}
+
+The first comes from your middleware, the second from uvicorn's own access log. You don't need an ``unknown endpoint'' handler, unlike the original course: FastAPI already answers unknown URLs with \cd{404 {"detail": "Not Found"}}.
+
+\textbf{Find All References.} When you move code, check that everything still uses the right import. In VS Code, right-click a name such as \cd{get_db} and choose \textbf{Find All References} (Shift+Alt+F12). Pylance lists every file that uses it.
+
+\subsection{Testing: why and what}
+
+So far you tested by hand, by clicking in \cd{/docs} and the frontend. Automated tests are code that checks your code. You run them with one command, as often as you like, and they tell you right away when a change broke something.
+
+This section covers \textbf{unit tests}: tests of single functions, with no server or database. Section 4b tests the API itself.
+
+\subsection{pytest}
+
+\textbf{pytest} is the most widely used test tool for Python. It's a development tool like Ruff, so it goes in the repo root \cd{requirements-dev.txt}:
+
+\begin{code}
+ruff==0.17.1
+pytest==9.1.1
+\end{code}
+
+Install it from the repo root: \cd{pip install -r requirements-dev.txt}.
+
+\subsubsection{What pytest does when you run it}
+
+\begin{enumerate}
+\item \textbf{Finds its settings.} It looks for a config file such as \cd{pytest.ini}, starting in the current folder and moving up. The folder where it finds one is the \textbf{rootdir}.
+\item \textbf{Collects tests.} It walks through the folders and picks up files named \cd{test_*.py}; inside them, functions named \cd{test_*}; and classes named \cd{Test*}, with methods named \cd{test_*}.
+\item \textbf{Imports each test file}, like any Python module.
+\item \textbf{Calls each test, one at a time.} A test \textbf{passes} if it finishes without raising an exception. Any exception means it \textbf{fails}. pytest catches it, records it, and moves on, so one failure doesn't stop the run.
+\item \textbf{Prints a report} and exits with code \cd{0} if everything passed, or \cd{1} if something failed. Tools that run tests automatically (GitHub Actions, in chapter 11) read that code.
+\end{enumerate}
+
+There's no special ``pass'' or ``fail'' function. \textbf{Raising an exception is how a test fails.}
+
+\subsubsection{pytest.ini: where imports are looked up}
+
+\textbf{New file} \cd{pytest.ini} in \cd{notes_backend}:
+
+\begin{code}
+[pytest]
+pythonpath = .
+\end{code}
+
+To see why it's needed: when Python runs \cd{from utils.for_testing import reverse}, it searches a list of folders called \cd{sys.path}, in order, for a \cd{utils} folder or a \cd{utils.py} file. If none of them has it, it raises \cd{ModuleNotFoundError}.
+
+\begin{itemize}
+\item \textbf{uvicorn} adds the folder you run it from to \cd{sys.path}. That's why \cd{from database import ...} has always worked in \cd{main.py}.
+\item \textbf{pytest} adds the test file's own folder, here \cd{tests/}. \cd{utils/} isn't inside \cd{tests/}, so without \cd{pytest.ini} every test file fails with \cd{ModuleNotFoundError: No module named 'utils'}.
+\item \cd{pythonpath = .} adds the rootdir, the folder that holds \cd{pytest.ini}, to \cd{sys.path}. Now \cd{utils} is found.
+\end{itemize}
+
+The file does a second job: it marks \cd{notes_backend} as the rootdir, so pytest knows where the project starts.
+
+\subsection{Something to test: utils/for\_testing.py}
+
+\begin{py}
+def reverse(text: str) -> str:
+	return text[::-1]
+
+
+def average(numbers: list[float]) -> float:
+	return sum(numbers) / len(numbers)
+\end{py}
+
+\cd{text[::-1]} is \textbf{slicing}, \cd{[start:stop:step]}. Leaving out start and stop means ``the whole string'', and a step of \cd{-1} walks it from the last character to the first. The result is a new, reversed string.
+
+\subsection{The first tests}
+
+\textbf{New file} \cd{tests/test_reverse.py}:
+
+\begin{py}
+from utils.for_testing import reverse
+
+
+def test_reverse_of_a():
+	assert reverse("a") == "a"
+
+
+def test_reverse_of_react():
+	assert reverse("react") == "tcaer"
+
+
+def test_reverse_of_saippuakauppias():
+	assert reverse("saippuakauppias") == "saippuakauppias"
+\end{py}
+
+\textbf{How assert works.} \cd{assert <condition>} is a normal Python statement, not something added by pytest. If the condition is true, nothing happens. If it's false, Python raises \cd{AssertionError}, and that exception is what makes the test fail.
+
+On its own, an \cd{AssertionError} doesn't say which values were compared. pytest fixes that: when it imports a test file, it \textbf{rewrites every assert} into code that remembers both sides of the comparison. When a test fails, the report shows what came out and what was expected. That's why pytest needs no special functions like \cd{assertEqual}.
+
+Give each test a name that says what it checks: the name is what you see when it fails.
+
+\textbf{New file} \cd{tests/test_average.py}:
+
+\begin{py}
+from utils.for_testing import average
+
+
+class TestAverage:
+	def test_of_one_value_is_the_value_itself(self):
+		assert average([1]) == 1
+
+	def test_of_many_is_calculated_right(self):
+		assert average([1, 2, 3, 4, 5, 6]) == 3.5
+
+	def test_of_empty_list_is_zero(self):
+		assert average([]) == 0
+\end{py}
+
+\textbf{How a test class works.} \cd{class TestAverage:} groups related tests, like \cd{describe} in the original course. It's an ordinary class used only as a container:
+\begin{itemize}
+\item For \emph{each} test method, pytest creates a \emph{new} object of the class and calls the method on it. That's why each method takes \cd{self}, even though you don't use it.
+\item Because every test gets a fresh object, tests in the same class can't affect each other.
+\item Don't give the class an \cd{__init__} method; pytest skips classes that have one.
+\end{itemize}
+
+\subsection{Running the tests}
+
+From \cd{notes_backend}, run \cd{pytest}:
+
+\begin{code}
+tests/test_average.py ..F
+tests/test_reverse.py ...
+
+    def average(numbers: list[float]) -> float:
+>   	return sum(numbers) / len(numbers)
+E    ZeroDivisionError: division by zero
+
+FAILED tests/test_average.py::TestAverage::test_of_empty_list_is_zero - ZeroD...
+1 failed, 5 passed
+\end{code}
+
+\begin{itemize}
+\item Each \cd{.} is a passed test, and \cd{F} a failed one.
+\item The failure is a \cd{ZeroDivisionError}, not an \cd{AssertionError}: \cd{average([])} crashed before \cd{assert} could compare anything. It still counts as a failure, because any exception does.
+\item \cd{>} marks the line where it happened, and \cd{E} shows the error.
+\end{itemize}
+
+\textbf{The test found a real bug.} \cd{len([])} is 0, and dividing by 0 raises an error. Fix \cd{average}:
+
+\begin{py}
+def average(numbers: list[float]) -> float:
+	if len(numbers) == 0:
+		return 0
+	return sum(numbers) / len(numbers)
+\end{py}
+
+Run \cd{pytest} again: \cd{6 passed}. Useful options:
+
+\begin{code}
+pytest -v                        # print each test's full name
+pytest tests/test_average.py     # run one file
+pytest -k empty                  # only tests whose name contains "empty"
+\end{code}
+
+\subsection{Comparing dicts and lists}
+
+The original course needs a special \cd{deepStrictEqual} to compare objects, because JavaScript's \cd{===} checks whether two objects are the \emph{same object} in memory. Python has two different operators:
+\begin{itemize}
+\item \cd{is} asks ``are these the same object?''
+\item \cd{==} asks ``do these hold equal values?'' For a dict, it checks that both have the same keys and compares each pair of values with \cd{==} again, all the way down.
+\end{itemize}
+
+\begin{py}
+a = {"author": "Noor Haddad", "blogs": 3}
+b = {"author": "Noor Haddad", "blogs": 3}
+a == b    # True: same contents
+a is b    # False: two separate objects
+
+[{"likes": 1}] == [{"likes": 1}]   # True
+\end{py}
+
+The order of keys in a dict doesn't matter; the order of items in a list does. Plain \cd{assert ... == ...} is all your tests need.
+
+\subsection{Python tools for the exercises}
+
+Each tool is shown on this list:
+
+\begin{py}
+blogs = [
+	{"title": "A", "author": "Maren Holt", "likes": 7},
+	{"title": "B", "author": "Idris Okafor", "likes": 5},
+	{"title": "C", "author": "Idris Okafor", "likes": 12},
+]
+\end{py}
+
+\textbf{sum with a generator expression.} \cd{sum(b["likes"] for b in blogs)} gives 24. The generator expression doesn't build a list; it produces one value each time \cd{sum} asks for the next. \cd{sum} starts at 0 and adds each value as it arrives.
+
+\textbf{max with key.}
+
+\begin{py}
+max(blogs, key=lambda b: b["likes"])   # {"title": "C", "author": "Idris Okafor", "likes": 12}
+\end{py}
+
+\cd{max} goes through the items one by one, calls the \cd{key} function on each, and keeps the item whose key is the biggest so far. It only replaces it when it finds a strictly bigger one, so on a tie the \emph{first} item wins. It returns the \emph{item itself}, not the key. \cd{max([])} has nothing to return and raises \cd{ValueError}, so check for an empty list first.
+
+\textbf{collections.Counter.}
+
+\begin{py}
+from collections import Counter
+
+counts = Counter(b["author"] for b in blogs)   # Counter({"Idris Okafor": 2, "Maren Holt": 1})
+
+likes = Counter()
+for b in blogs:
+	likes[b["author"]] += b["likes"]           # Counter({"Idris Okafor": 17, "Maren Holt": 7})
+\end{py}
+
+A \cd{Counter} \emph{is} a dict (a subclass of \cd{dict}) that maps each key to a count. Given a sequence, it adds 1 for each item it sees. With a normal dict, \cd{likes["Maren Holt"] += 7} on a missing key raises \cd{KeyError}, because \cd{+=} first reads the current value. A \cd{Counter} returns \cd{0} for a missing key instead, so \cd{+=} works on any key.
+
+\textbf{most\_common.}
+
+\begin{py}
+counts.most_common(1)      # [("Idris Okafor", 2)]
+Counter().most_common(1)   # []
+author, count = counts.most_common(1)[0]
+\end{py}
+
+It sorts the keys from the biggest count down and returns the first \cd{n} as a list of \cd{(key, count)} tuples; on a tie, the key that was added first comes first. On an empty \cd{Counter} the list is empty and \cd{[0]} raises \cd{IndexError}, so check for an empty list first.
+
+\subsection{Tabs and spaces: what Python actually checks}
+
+Sooner or later you will see \cd{IndentationError: unindent does not match any outer indentation level} in a file that looks perfectly indented. The reason is usually a mix of tabs and spaces, which look identical in the editor but are different characters.
+
+For each line, Python works out how deep the indentation is and compares it with the open blocks above. A tab counts as jumping to the next multiple of 8 columns, so one tab is column 8, while 4 spaces is column 4. If the open levels are column 0 (a class) and column 8 (its methods, indented with a tab), a line indented with 4 spaces matches neither, and Python can't tell which block it belongs to. Even when the columns happen to match, Python 3 refuses code where tabs and spaces could mean different depths.
+
+\cd{cat -A file.py} in a terminal shows a tab as \cd{^I}. To fix a file, run \cd{ruff format .} (which uses tabs because of \cd{indent-style = "tab"}) or VS Code's \textbf{Convert Indentation to Tabs} command, and keep the VS Code settings from the start of the book so it doesn't happen again.
+
+\subsection{Exercises 4.1--4.7}
+
+These exercises build a new app: a \textbf{blog list}, where users save links to blog posts they find interesting. Each blog has a title, an author, a URL and a number of likes.
+
+\begin{exercise}{4.1: Blog list, step 1}
+Create \cd{chapter4/bloglist_backend} with this single-file app as \cd{main.py}:
+
+\begin{py}
+import os
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import create_engine, select
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+load_dotenv()
+
+engine = create_engine(os.environ["DATABASE_URL"], pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine)
+
+
+class Base(DeclarativeBase):
+	pass
+
+
+class Blog(Base):
+	__tablename__ = "blogs"
+
+	id: Mapped[int] = mapped_column(primary_key=True)
+	title: Mapped[str]
+	author: Mapped[str]
+	url: Mapped[str]
+	likes: Mapped[int] = mapped_column(default=0)
+
+
+class BlogCreate(BaseModel):
+	title: str
+	author: str
+	url: str
+	likes: int = 0
+
+
+class BlogOut(BaseModel):
+	model_config = ConfigDict(from_attributes=True)
+
+	id: int
+	title: str
+	author: str
+	url: str
+	likes: int
+
+
+def get_db():
+	db = SessionLocal()
+	try:
+		yield db
+	finally:
+		db.close()
+
+
+Base.metadata.create_all(engine)
+
+app = FastAPI()
+
+
+@app.get("/api/blogs")
+def get_blogs(db: Session = Depends(get_db)) -> list[BlogOut]:
+	blogs = db.scalars(select(Blog)).all()
+	return [BlogOut.model_validate(b) for b in blogs]
+
+
+@app.post("/api/blogs", status_code=201)
+def create_blog(data: BlogCreate, db: Session = Depends(get_db)) -> BlogOut:
+	blog = Blog(title=data.title, author=data.author, url=data.url, likes=data.likes)
+	db.add(blog)
+	db.commit()
+	db.refresh(blog)
+	return BlogOut.model_validate(blog)
+\end{py}
+
+Make it a working project: copy \cd{requirements.txt} from the notes backend, add a \cd{.env} with the same \cd{DATABASE_URL} (\cd{create_all} creates a new \cd{blogs} table), run it on a free port such as 3003, and check in \cd{/docs} that blogs can be added and listed.
+\end{exercise}
+
+\begin{exercise}{4.2: Blog list, step 2}
+Split the app into modules with the same structure as the notes example: \cd{main.py}, \cd{database.py}, \cd{models.py}, \cd{schemas.py}, \cd{middleware.py} (a \cd{log_requests} middleware that uses \cd{logging}), and \cd{routers/blogs.py} with an \cd{APIRouter} whose prefix is \cd{/api/blogs}. Move one piece at a time, and after each piece restart uvicorn and check \cd{/docs}.
+\end{exercise}
+
+\begin{exercise}{4.3: Helper functions and unit tests, step 1}
+Add \cd{utils/__init__.py}, \cd{tests/} and \cd{pytest.ini}. In \cd{utils/list_helper.py}, write \cd{dummy(blogs)}, which takes a list of blogs and always returns \cd{1}. This test, in \cd{tests/test_list_helper.py}, must pass:
+\begin{py}
+from utils.list_helper import dummy
+
+
+def test_dummy_returns_one():
+	blogs = []
+	assert dummy(blogs) == 1
+\end{py}
+In these exercises a blog is a plain dict with the same keys as the API's JSON. Type the parameter as \cd{blogs: list[dict]}.
+\end{exercise}
+
+\textbf{Test data for 4.4--4.7.} Put this list in \cd{tests/test_list_helper.py}:
+
+\begin{py}
+blogs = [
+	{"title": "Patterns for state", "author": "Maren Holt",
+	 "url": "https://example.com/state", "likes": 7},
+	{"title": "Why GOTO hurts", "author": "Idris Okafor",
+	 "url": "https://example.com/goto", "likes": 5},
+	{"title": "Shrinking strings", "author": "Idris Okafor",
+	 "url": "https://example.com/strings", "likes": 12},
+	{"title": "First-class tests", "author": "Noor Haddad",
+	 "url": "https://example.com/tests", "likes": 10},
+	{"title": "Does TDD hurt design?", "author": "Noor Haddad",
+	 "url": "https://example.com/tdd", "likes": 0},
+	{"title": "Type wars", "author": "Noor Haddad",
+	 "url": "https://example.com/types", "likes": 2},
+]
+\end{py}
+
+For each of the four functions below (\cd{total_likes}, \cd{favorite_blog}, \cd{most_blogs}, \cd{most_likes}), test three cases: an empty list, a list with one blog (\cd{[blogs[0]]}), and the whole list. Put each function's tests in its own \cd{Test...} class. Expected results:
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lllX@{}}
+\toprule
+\textbf{Function} & \cd{[]} & \cd{[blogs[0]]} & \textbf{full list} \\
+\midrule
+\cd{total_likes} & \cd{0} & \cd{7} & \cd{36} \\
+\cd{favorite_blog} & \cd{None} & \cd{blogs[0]} & \cd{blogs[2]} (``Shrinking strings'') \\
+\cd{most_blogs} & \cd{None} & \cd{{"author": "Maren Holt", "blogs": 1}} & \cd{{"author": "Noor Haddad", "blogs": 3}} \\
+\cd{most_likes} & \cd{None} & \cd{{"author": "Maren Holt", "likes": 7}} & \cd{{"author": "Idris Okafor", "likes": 17}} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\begin{exercise}{4.4: Helper functions and unit tests, step 2}
+\cd{total_likes(blogs)} returns the sum of all likes.
+\end{exercise}
+
+\begin{exercise}{4.5*: Helper functions and unit tests, step 3}
+\cd{favorite_blog(blogs)} returns the blog with the most likes, as the whole dict. On a tie, any of them is fine. For an empty list, return \cd{None}, and type the return value as \cd{dict | None}.
+\end{exercise}
+
+\begin{exercise}{4.6*: Helper functions and unit tests, step 4}
+\cd{most_blogs(blogs)} returns the author with the most blogs and how many, as \cd{{"author": ..., "blogs": ...}}. On a tie, any of them is fine; for an empty list, \cd{None}.
+\end{exercise}
+
+\begin{exercise}{4.7*: Helper functions and unit tests, step 5}
+\cd{most_likes(blogs)} returns the author whose blogs have the most likes in total, and that total, as \cd{{"author": ..., "likes": ...}}. On a tie, any of them is fine; for an empty list, \cd{None}.
+\end{exercise}
+
+\textbf{Limits for 4.3--4.7:} tests use plain \cd{assert}; \cd{pytest} must pass, and \cd{ruff check .} from the repo root must report \cd{All checks passed!}.
+
+%=====================================================================
+\section{b. Testing the backend}
+
+In 4a you tested single functions. Now you test the \textbf{API itself}: send real requests to your routes and check the responses and the database. These are \textbf{integration tests}, because they test several parts working together: FastAPI, your routes, SQLAlchemy and PostgreSQL.
+
+We work in \cd{chapter3/notes_backend}. The exercises then do the same for the blog list.
+
+\subsection{A separate database for tests}
+
+Tests delete and create data on every run. Running them against Neon would wipe your real notes. So tests get \textbf{their own database}. It runs \textbf{locally, in Docker}: fast, because there's no network trip to Neon, and its data doesn't matter.
+
+\subsubsection{How Docker works}
+
+\begin{itemize}
+\item An \textbf{image} is a ready-made, read-only package: a program plus everything it needs to run. \cd{postgres:17} is the official PostgreSQL 17 image; \cd{17} is the \textbf{tag}, the version. We use 17 because Neon runs PostgreSQL 17, so tests run on the same version as production.
+\item A \textbf{container} is a running copy of an image. It's isolated from your computer: it has its own files, its own processes and its own network address. That's why PostgreSQL doesn't need to be installed on your system.
+\end{itemize}
+
+\subsubsection{Starting the test database}
+
+Run this once:
+
+\begin{code}
+docker run -d --name fso-test-db -e POSTGRES_PASSWORD=secret -e POSTGRES_DB=fso_test -p 5432:5432 postgres:17
+\end{code}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Part} & \textbf{Meaning} \\
+\midrule
+\cd{docker run ... postgres:17} & create a container from the image and start it; the image is downloaded the first time \\
+\cd{-d} & ``detached'': run in the background and give you the terminal back \\
+\cd{--name fso-test-db} & a name for later commands \\
+\cd{-e POSTGRES_PASSWORD=secret} & an environment variable for the container; the image reads it on first start and sets it as the password of the user \cd{postgres} \\
+\cd{-e POSTGRES_DB=fso_test} & the image creates a database with this name on first start \\
+\cd{-p 5432:5432} & \textbf{port publishing}, \cd{computer:container}. The container has its own network address that your programs can't reach directly. Docker listens on port 5432 of your computer and forwards each connection into the container's port 5432, where PostgreSQL listens. \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{Wait a few seconds after the first start.} On first start the image creates the database, restarts PostgreSQL, and only then accepts connections. Connecting too early fails with ``server closed the connection unexpectedly''.
+
+\begin{code}
+docker ps                    # list running containers
+docker stop fso-test-db      # stop it (the data stays)
+docker start fso-test-db     # start it again, for example after a reboot
+docker rm -f fso-test-db     # delete the container and its data
+\end{code}
+
+The data lives inside the container, so it survives \cd{stop} and \cd{start} and is lost on \cd{rm}. For a test database, that's fine.
+
+\begin{warn}[VPNs and published ports]
+If every connection to a published port fails with ``server closed the connection unexpectedly'' (or \cd{curl} reports ``Connection reset by peer''), even after waiting, check your VPN. Some VPN apps block all traffic to private network addresses, and Docker's containers live on such addresses. In Mullvad, for example, the setting is \textbf{Local network sharing}; with it blocked, nothing on your machine can reach a container. Allowing it lets your computer reach private addresses (containers, and also devices on your home network) while internet traffic still goes through the VPN.
+\end{warn}
+
+\subsubsection{Connecting to it}
+
+Add a line to \cd{chapter3/notes_backend/.env}:
+
+\begin{code}
+DATABASE_URL=postgresql+psycopg://...your Neon URL, unchanged...
+TEST_DATABASE_URL=postgresql+psycopg://postgres:secret@localhost:5432/fso_test
+\end{code}
+
+It has the same parts as the Neon URL from 3c: user \cd{postgres}, password \cd{secret}, host \cd{localhost} (your computer, where Docker listens), port \cd{5432} and database \cd{fso_test}. The blog list will use the same test database; the two apps use different tables, so they don't affect each other.
+
+\subsection{Making the app use the test database: conftest.py}
+
+\cd{database.py} creates the engine from \cd{DATABASE_URL}. During tests, that variable has to hold the test URL \emph{before} \cd{database.py} runs.
+
+\textbf{New file} \cd{tests/conftest.py}:
+
+\begin{py}
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+\end{py}
+
+How this works, step by step:
+\begin{enumerate}
+\item pytest imports \cd{conftest.py} \textbf{before any test file in the same folder}. The name is fixed: pytest looks for exactly \cd{conftest.py}. It's the place for setup that all test files share.
+\item \cd{load_dotenv()} loads \cd{.env}, so both URLs are now in \cd{os.environ}.
+\item The next line copies the test URL into \cd{DATABASE_URL}, replacing the Neon URL.
+\item Then pytest imports your test file, which imports \cd{main}, which imports \cd{database}. \cd{database.py} calls \cd{load_dotenv()} again, but \cd{load_dotenv} never replaces a variable that's already set (3c), so \cd{DATABASE_URL} keeps the test URL. The engine connects to Docker.
+\end{enumerate}
+
+It's also a safety net: if \cd{TEST_DATABASE_URL} is missing, \cd{os.environ[...]} raises \cd{KeyError} and nothing runs, so tests can never fall back to Neon. \cd{database.py} and \cd{main.py} stay unchanged.
+
+\subsection{Calling the API in tests: TestClient}
+
+FastAPI's \textbf{TestClient} sends requests to your app from a test, with the same methods as httpx: \cd{client.get(...)}, \cd{client.post(..., json=...)}, and so on.
+
+\textbf{How it works without a server.} Recall ASGI from 3a: your \cd{app} is, underneath, one function that receives a request as Python data and sends the response back as Python data. uvicorn's job is to turn network bytes into that data. \cd{TestClient} builds the same data directly and calls \cd{app} itself: no uvicorn, no port, no network. That's why it's fast, and why you don't need to start the server before running tests. (The original course splits \cd{app.js} from \cd{index.js} so tests can import the app without starting a server. You already have that split: \cd{main.py} only creates \cd{app}, and uvicorn is started separately.)
+
+\textbf{Install its dependency.} \cd{TestClient} uses the \textbf{httpx2} package; without it, it falls back to the older \cd{httpx} and prints a deprecation warning. Add it to \cd{requirements-dev.txt}:
+
+\begin{code}
+ruff==0.17.1
+pytest==9.1.1
+httpx2==2.15.1
+\end{code}
+
+\subsection{Test helpers: tests/helper.py}
+
+\begin{py}
+from sqlalchemy import select
+
+from database import SessionLocal
+from models import Note
+from schemas import NoteOut
+
+initial_notes = [
+	{"content": "HTML is easy", "important": False},
+	{"content": "Browser can execute only JavaScript", "important": True},
+]
+
+
+def notes_in_db() -> list[dict]:
+	with SessionLocal() as db:
+		notes = db.scalars(select(Note)).all()
+		return [NoteOut.model_validate(n).model_dump() for n in notes]
+
+
+def non_existing_id() -> int:
+	with SessionLocal() as db:
+		note = Note(content="willremovethissoon")
+		db.add(note)
+		db.commit()
+		note_id = note.id
+		db.delete(note)
+		db.commit()
+	return note_id
+\end{py}
+
+\begin{itemize}
+\item \cd{with SessionLocal() as db:} opens a session and closes it when the block ends, as in \cd{cli.py}. Tests aren't routes, so there's no \cd{Depends}.
+\item \cd{notes_in_db} returns every note as a dict, in the same shape as the API's JSON: \cd{model_validate} turns each row into a \cd{NoteOut}, and \cd{.model_dump()} turns that into a plain dict. So you can compare it directly with \cd{response.json()}.
+\end{itemize}
+
+\textbf{What non\_existing\_id is for.} It's for testing the \textbf{404 case}: asking for a note that doesn't exist. That test needs an id that is a real integer but matches no note. You could write \cd{999999}, and it would almost always work, but it's a guess: if the table ever reaches that id, the test gets a real note back and fails for the wrong reason. \cd{non_existing_id()} doesn't guess. It creates a note (PostgreSQL gives it the next id, say 57), deletes it, and returns 57. No note has that id now, and none ever will, because the sequence that generates ids never hands out the same number twice.
+
+It's also different from asking for \cd{/api/notes/abc}: \cd{"abc"} isn't a number at all, so FastAPI rejects it with \cd{422} before your route runs. To reach the \cd{if note is None:} line in \cd{get_note} and get the \cd{404}, you need a valid integer that matches no note.
+
+\subsection{Resetting the database before each test: fixtures}
+
+Tests must not depend on each other or on leftover data. If one test adds a note, the next test's ``there are 2 notes'' check would fail. So before \emph{each} test, the \cd{notes} table is emptied and filled with \cd{initial_notes}. pytest does this with a \textbf{fixture}: a function that pytest runs for you around a test.
+
+\textbf{New file} \cd{tests/test_notes_api.py}, the beginning:
+
+\begin{py}
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy import delete
+
+from database import SessionLocal
+from main import app
+from models import Note
+from tests.helper import initial_notes, non_existing_id, notes_in_db
+
+client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_notes():
+	with SessionLocal() as db:
+		db.execute(delete(Note))
+		db.add_all([Note(**n) for n in initial_notes])
+		db.commit()
+\end{py}
+
+\textbf{How fixtures work:}
+\begin{itemize}
+\item \cd{@pytest.fixture} registers the function as a fixture.
+\item Normally a test \emph{asks} for a fixture by having a parameter with the fixture's name, \cd{def test_x(reset_notes):}. pytest sees the name, runs the fixture first and passes its result in. This is the same idea as FastAPI's \cd{Depends}: the function says what it needs, and the framework provides it.
+\item \cd{autouse=True} means ``run this before \emph{every} test in this file, without being asked''. Our tests don't use a value from it; they only need it to have run.
+\item By default a fixture runs once \emph{per test}, which is exactly what resetting needs.
+\item A fixture can also \cd{yield} a value: code before \cd{yield} runs before the test, code after it runs after the test, the same pattern as \cd{get_db}.
+\end{itemize}
+
+\textbf{The new SQLAlchemy pieces:}
+\begin{itemize}
+\item \cd{delete(Note)} builds \cd{DELETE FROM notes}, which removes every row. Like \cd{select(...)}, it only builds the statement; \cd{db.execute(...)} runs it.
+\item \cd{db.add_all([...])} is \cd{db.add} for a list. All rows are sent with one \cd{commit}, in one transaction: one round trip instead of one per note. This is the Python version of the original course's ``optimizing beforeEach''.
+\item \cd{Note(**n)} unpacks a dict into keyword arguments (1b).
+\end{itemize}
+
+\textbf{Never hard-code ids in tests.} The sequence keeps counting across runs, so the ids differ every time. Get them from \cd{notes_in_db()}.
+
+\textbf{Why from tests.helper import ...} \cd{pythonpath = .} puts \cd{notes_backend} on \cd{sys.path}, so \cd{tests.helper} means ``the \cd{helper} module inside the \cd{tests} folder''. This works whether or not \cd{tests/} has an \cd{__init__.py}.
+
+\subsection{The tests}
+
+\begin{py}
+class TestGetAllNotes:
+	def test_notes_are_returned_as_json(self):
+		response = client.get("/api/notes")
+		assert response.status_code == 200
+		assert response.headers["content-type"] == "application/json"
+
+	def test_all_notes_are_returned(self):
+		response = client.get("/api/notes")
+		assert len(response.json()) == len(initial_notes)
+
+	def test_a_specific_note_is_among_the_returned_notes(self):
+		response = client.get("/api/notes")
+		contents = [n["content"] for n in response.json()]
+		assert "HTML is easy" in contents
+
+
+class TestGetOneNote:
+	def test_succeeds_with_a_valid_id(self):
+		note_to_view = notes_in_db()[0]
+		response = client.get(f"/api/notes/{note_to_view['id']}")
+		assert response.status_code == 200
+		assert response.json() == note_to_view
+
+	def test_fails_with_404_if_note_does_not_exist(self):
+		response = client.get(f"/api/notes/{non_existing_id()}")
+		assert response.status_code == 404
+
+	def test_fails_with_422_if_id_is_invalid(self):
+		response = client.get("/api/notes/abc")
+		assert response.status_code == 422
+
+
+class TestAddNote:
+	def test_succeeds_with_valid_data(self):
+		new_note = {"content": "pytest makes testing easy", "important": True}
+		response = client.post("/api/notes", json=new_note)
+		assert response.status_code == 201
+
+		notes_at_end = notes_in_db()
+		assert len(notes_at_end) == len(initial_notes) + 1
+		assert "pytest makes testing easy" in [n["content"] for n in notes_at_end]
+
+	def test_fails_with_422_if_content_is_missing(self):
+		response = client.post("/api/notes", json={"important": True})
+		assert response.status_code == 422
+		assert len(notes_in_db()) == len(initial_notes)
+
+
+class TestDeleteNote:
+	def test_succeeds_with_204_if_id_is_valid(self):
+		note_to_delete = notes_in_db()[0]
+		response = client.delete(f"/api/notes/{note_to_delete['id']}")
+		assert response.status_code == 204
+
+		notes_at_end = notes_in_db()
+		assert len(notes_at_end) == len(initial_notes) - 1
+		assert note_to_delete not in notes_at_end
+\end{py}
+
+What the response object gives you:
+\begin{itemize}
+\item \cd{response.status_code} is the status, such as \cd{200};
+\item \cd{response.headers["content-type"]} is a response header; \cd{application/json} means the body is JSON;
+\item \cd{response.json()} turns the body into Python dicts and lists.
+\end{itemize}
+
+What the tests check:
+\begin{itemize}
+\item \textbf{The database, not only the response.} A route could answer \cd{201} and still not save anything. Only the database shows what really happened.
+\item \textbf{A rejected request changes nothing}: that's why the 422 test checks that the count is unchanged.
+\item \textbf{Invalid id: 422, not 400.} In the original course a malformed id reaches the code and must be turned into \cd{400} by hand. Your route declares \cd{note_id: int}, so FastAPI rejects \cd{abc} before your function runs.
+\item \cd{in} / \cd{not in} check whether a list contains a value, comparing with \cd{==}.
+\end{itemize}
+
+\subsection{Running them}
+
+Make sure the container is running (\cd{docker ps}), then run \cd{pytest} from \cd{notes_backend}: all tests pass.
+
+\textbf{Where did the log lines go?} pytest \textbf{captures} everything printed or logged during each test and shows it only when that test fails, under ``Captured log call''. The original course has to switch off its logger in test mode; pytest makes that unnecessary.
+
+\textbf{Running only some tests}:
+
+\begin{code}
+pytest tests/test_notes_api.py                                              # one file
+pytest tests/test_notes_api.py::TestAddNote                                 # one class
+pytest tests/test_notes_api.py::TestAddNote::test_succeeds_with_valid_data  # one test
+pytest -k "add or delete"                                                   # names matching an expression
+pytest -x                                                                   # stop at the first failure
+\end{code}
+
+The \cd{file::Class::test} form is a \textbf{node id}; \cd{pytest -v} prints each test's node id, so you can copy it from there.
+
+\textbf{Watch a new test fail once.} A test that has never failed might check nothing, like an \cd{assert total_likes(...)} without \cd{==}, which passes for any non-zero number. After writing a test, break the code on purpose (for example change \cd{status_code=201} to \cd{200} in \cd{create_note}), see the test fail, and undo the change.
+
+\subsection{Why the routes stay def, not async def}
+
+The original course rewrites its routes with \cd{async}/\cd{await} here. To see why this book doesn't, you need two words.
+
+A \textbf{process} is a running program: uvicorn, with your app loaded, is one process. A \textbf{thread} is one line of execution inside a process: a sequence of instructions being carried out, one after another. A process starts with one thread and can start more; the threads share the process's memory (your module-level variables, the engine and its pool), and the operating system switches between them, so several can be in the middle of their work at the same time. When a thread waits, for example for the database to answer, it simply sits there, and the operating system runs other threads meanwhile.
+
+FastAPI runs the two kinds of route differently:
+\begin{itemize}
+\item \textbf{async def routes} run on the \textbf{event loop} (2c): a single thread that switches between tasks whenever one reaches an \cd{await}.
+\item \textbf{def routes} run in a \textbf{thread pool}: a set of threads started in advance and reused (at most 40 at once by default). Each request gets a thread, and a slow database call blocks only that thread.
+\end{itemize}
+
+Your database code is \textbf{synchronous}: \cd{db.scalars(...)} simply waits, and there's nothing to \cd{await}. In an \cd{async def} route that wait would block the event loop, and \emph{every} other request would stall until it finished. So with synchronous SQLAlchemy, \cd{def} is the correct choice. (SQLAlchemy has an async version too, but it adds complexity this course doesn't need.) The original's section on forwarding errors to an error handler also needs nothing here: \cd{HTTPException}, validation and your \cd{OperationalError} handler already do that job.
+
+\subsection{Summary of changes in the notes example}
+
+\begin{center}
+\begin{tabularx}{0.95\textwidth}{@{}lX@{}}
+\toprule
+\textbf{File} & \textbf{Change} \\
+\midrule
+\cd{.env} & add \cd{TEST_DATABASE_URL} \\
+\cd{tests/conftest.py} & new: points \cd{DATABASE_URL} at the test database \\
+\cd{tests/helper.py} & new: \cd{initial_notes}, \cd{notes_in_db}, \cd{non_existing_id} \\
+\cd{tests/test_notes_api.py} & new: \cd{reset_notes} fixture and API tests \\
+\cd{requirements-dev.txt} & add \cd{httpx2==2.15.1} \\
+Docker & the \cd{fso-test-db} container \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Exercises 4.8--4.14}
+
+\textbf{Setup for the blog list}, in \cd{chapter4/bloglist_backend}: \cd{TEST_DATABASE_URL} in \cd{.env} (same value as the notes backend), \cd{tests/conftest.py}, \cd{tests/helper.py} with \cd{initial_blogs}, \cd{blogs_in_db()} and \cd{non_existing_id()}, and \cd{tests/test_blogs_api.py} with a reset fixture.
+
+\textbf{Limits:} tests use only the test database; no hard-coded ids; every test passes on its own and in any order; see each new test fail once.
+
+\begin{exercise}{4.8: Blog list tests, step 1}
+Test that \cd{GET /api/blogs} returns the right number of blogs, as JSON. Run only the tests you're working on, using a node id or \cd{-k}.
+\end{exercise}
+
+\begin{exercise}{4.9: Blog list tests, step 2}
+Test that every returned blog has a key named \cd{id} whose value is an \cd{int}. In the original course the database names it \cd{_id}; here \cd{BlogOut} already uses \cd{id}, so the test passes right away. To see it fail, temporarily rename \cd{id} in \cd{BlogOut}.
+\end{exercise}
+
+\begin{exercise}{4.10: Blog list tests, step 3}
+Test that \cd{POST /api/blogs} creates a blog: the status is \cd{201}, the number of blogs in the database grows by one, and the new title is among the saved titles.
+\end{exercise}
+
+\begin{exercise}{4.11*: Blog list tests, step 4}
+Test that a blog posted without \cd{likes} is saved with \cd{likes} equal to \cd{0}, in the response and in \cd{blogs_in_db()}. \cd{BlogCreate} already has \cd{likes: int = 0}, so it passes right away. To see it fail, temporarily remove the \cd{= 0}. What status does the test get then, and why?
+\end{exercise}
+
+\begin{exercise}{4.12*: Blog list tests, step 5}
+Test that a blog without \cd{title}, and one without \cd{url}, are both rejected with \cd{422}, and that nothing is saved. (The original course expects \cd{400}; FastAPI uses \cd{422} for invalid request bodies, and that's correct here.)
+\end{exercise}
+
+\begin{exercise}{4.13: Blog list expansions, step 1}
+Add \cd{DELETE /api/blogs/{blog_id}}, answering \cd{204}. Test that the blog is gone from the database and that the count drops by one.
+\end{exercise}
+
+\begin{exercise}{4.14: Blog list expansions, step 2}
+Add \cd{PATCH /api/blogs/{blog_id}} for updating a blog's likes, like the phonebook's number update in 3.17: a new schema \cd{BlogUpdate} with one required field, \cd{likes: int}; a missing id answers \cd{404}; the response is the updated blog. Test a successful update (in the response and in the database), a missing id (\cd{404}), and a body without \cd{likes} (\cd{422}).
+\end{exercise}

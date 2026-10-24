@@ -1,0 +1,1571 @@
+\chapter{Programming a server with FastAPI}
+
+\textbf{Sections:} a. FastAPI basics $\cdot$ b. Deploying the app to the internet $\cdot$ c. Saving data to PostgreSQL $\cdot$ d. Validation and Ruff
+
+%=====================================================================
+\section{a. FastAPI basics}
+
+In chapter 2 the data lived on a fake server. Now you write the real one: a \textbf{backend} that stores the data and answers HTTP requests from any client. The original course uses Node.js with Express; this book uses \textbf{FastAPI}.
+
+\subsection{Why a separate backend}
+
+The Reflex app already has a server, so why another one?
+\begin{itemize}
+\item The Reflex server holds \emph{per-tab} state. Data every user shares (all the notes) needs one central place.
+\item A backend with a REST API can be used by any client: your Reflex app, a phone app, another website, or a test (chapter 4).
+\item Each part can change on its own. The frontend only knows the API's URLs, not how the data is stored.
+\end{itemize}
+
+\subsection{What a server program has to do}
+
+A backend is a program that waits for HTTP requests and answers them. Look at everything it has to do for \emph{every} request:
+
+\begin{enumerate}
+\item listen on a network port and accept the incoming connection;
+\item read the raw bytes and split them into method, path, headers and body;
+\item decide which piece of code should answer this method and path (\textbf{routing});
+\item pull values out of the path and the URL, and parse the JSON body into Python data;
+\item check that the data is complete and has the right types, and answer with an error if not;
+\item run your actual logic;
+\item turn the result back into JSON, pick the status code, write the headers, and send the bytes back.
+\end{enumerate}
+
+Only step 6 is specific to your app. The mock server from chapter 2 (\cd{tools/mock_server.py}) does steps 2--7 by hand with Python's standard library: it splits the path on \cd{/} itself, reads the body length from a header, calls \cd{json.loads}, and writes every header line with \cd{send_header}. It's about 150 lines, and it doesn't validate anything.
+
+\textbf{FastAPI} is a \textbf{web framework}: it does steps 2--5 and 7 for you. You write one Python function per URL and method, and describe with type hints what data each function expects and returns. FastAPI reads those hints and does the parsing, the checking, the error responses and the JSON conversion. It is built from two other libraries:
+\begin{itemize}
+\item \textbf{Starlette} handles the web part: requests, responses, routing and middleware.
+\item \textbf{Pydantic} handles the data part: checking and converting data according to type hints. You'll use it directly in this chapter.
+\end{itemize}
+
+Step 1, listening on the network, is done by a separate program, \textbf{uvicorn}. The next sections show how the two connect.
+
+\subsection{Installing and running}
+
+\begin{code}
+pip install fastapi uvicorn
+\end{code}
+
+Create \cd{chapter3/notes_backend/main.py}:
+
+\begin{py}
+from fastapi import FastAPI
+
+app = FastAPI()
+
+
+@app.get("/")
+def root() -> dict:
+	return {"message": "Hello World!"}
+\end{py}
+
+and run it from that folder:
+
+\begin{code}
+uvicorn main:app --reload --port 3001
+\end{code}
+
+\begin{itemize}
+\item \cd{main:app} means ``import the module \cd{main} (the file \cd{main.py}) and use the variable \cd{app} in it''.
+\item \cd{--reload} restarts the server whenever a \cd{.py} file changes. Use it only while developing.
+\item \cd{--port 3001} chooses the port. Port 3000 is Reflex's.
+\end{itemize}
+
+Open \url{http://localhost:3001/}: the browser shows \cd{{"message": "Hello World!"}}. FastAPI turned the returned dict into JSON.
+
+\subsection{How uvicorn and FastAPI fit together: ASGI}
+
+Two programs are involved, each with one job:
+\begin{itemize}
+\item \textbf{uvicorn} handles the network: it opens the port, reads the raw bytes of each request and writes the response bytes back.
+\item \textbf{Your FastAPI app} handles the logic: which function answers which URL, validation, your data.
+\end{itemize}
+
+\textbf{ASGI} (Asynchronous Server Gateway Interface) is the agreement between them. When a request arrives, uvicorn turns the bytes into a plain Python dict, roughly
+
+\begin{py}
+{"type": "http", "method": "GET", "path": "/api/notes", "headers": [...]}
+\end{py}
+
+and calls your app with it. The app answers by sending back Python data too: the status, the headers, the body. uvicorn turns that into bytes and sends them to the client.
+
+It works like a plug and a socket: any ASGI server can run any ASGI app. And because the app never touches the network itself, other code can call it directly with such a dict, which is exactly what tests do in chapter 4b.
+
+\subsection{Routes}
+
+\begin{py}
+@app.get("/api/notes")
+def get_notes() -> list[Note]:
+	return notes
+\end{py}
+
+\cd{@app.get("/api/notes")} is a decorator (1b) that \emph{registers} the function: ``when a \cd{GET} request for \cd{/api/notes} arrives, call this function''. Such a function is a \textbf{route} (also called a path operation). There is one decorator per HTTP method: \cd{@app.post}, \cd{@app.put}, \cd{@app.patch}, \cd{@app.delete}. Whatever the function returns is sent as JSON with status \cd{200}.
+
+The \cd{/api} prefix is a convention that separates the data API from any pages the server might also serve.
+
+\subsection{Data with Pydantic}
+
+For now the notes live in a Python list in memory. Each note is a \textbf{Pydantic model}:
+
+\begin{py}
+from pydantic import BaseModel, Field
+
+
+class Note(BaseModel):
+	id: str
+	content: str
+	important: bool
+
+
+notes: list[Note] = [
+	Note(id="1", content="HTML is easy", important=True),
+	Note(id="2", content="Browser can execute only JavaScript", important=False),
+	Note(id="3", content="GET and POST are the most important methods of HTTP protocol", important=True),
+]
+\end{py}
+
+\textbf{What Pydantic is for.} Data that comes from outside your program can't be trusted: a JSON body may lack a field, have a number where text should be, or contain \cd{null}. Type hints alone don't help, because Python ignores them at runtime (1b). Checking every field by hand (``is it there? is it a string? is it long enough?'') would be long and repetitive. \textbf{Pydantic} turns type hints into real checks: you describe the shape of the data once, as a class, and Pydantic checks every object against it.
+
+\textbf{How a BaseModel works.} A class that inherits from \cd{BaseModel} looks like a dataclass. The difference happens when you create an object: for every field, Pydantic takes the value you passed and checks it against the field's type and rules. Three outcomes are possible:
+
+\begin{itemize}
+\item the value already has the right type: it is kept;
+\item it has a different type that can be converted \emph{without losing information}: it is converted;
+\item anything else: the field fails.
+\end{itemize}
+
+These are real results for a model with \cd{n: int}, \cd{ok: bool} and \cd{s: str}:
+
+\begin{center}
+\begin{tabularx}{0.9\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Field} & \textbf{Value passed} & \textbf{Result} \\
+\midrule
+\cd{n: int} & \cd{"5"} & \cd{5}: a string of digits is converted \\
+\cd{n: int} & \cd{5.0} & \cd{5}: a float with nothing after the point is converted \\
+\cd{n: int} & \cd{5.5} & error \cd{int_from_float}: converting would lose the \cd{.5} \\
+\cd{n: int} & \cd{"5.5"} & error \cd{int_parsing} \\
+\cd{ok: bool} & \cd{"yes"} & \cd{True}: common words like yes/no, true/false, 1/0 are converted \\
+\cd{ok: bool} & \cd{"maybe"} & error \cd{bool_parsing} \\
+\cd{s: str} & \cd{5} & error \cd{string_type}: numbers are \emph{not} turned into text \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{All errors at once.} Pydantic doesn't stop at the first problem. It checks every field and, if any failed, raises one \cd{ValidationError} that lists all of them, each with the field's name (\cd{loc}), an error type and a message. That's why FastAPI's error responses (chapter 3d) contain a list.
+
+\begin{py}
+from pydantic import ValidationError
+
+try:
+	Note(id="1", content=None, important="maybe")
+except ValidationError as error:
+	print(error.error_count())    # 2: content and important both failed
+\end{py}
+
+\textbf{The other direction.} A model object turns back into plain data with \cd{.model_dump()} (a dict) or \cd{.model_dump_json()} (a JSON string). FastAPI uses this when it sends a model in a response.
+
+\textbf{How FastAPI uses Pydantic.} Incoming: a route argument typed with a model is built from the request's JSON, and a \cd{ValidationError} becomes a \cd{422} response. Outgoing: the route's return type is used to check and convert what the route returned, which is then dumped to JSON.
+
+\textbf{Return type hints shape the response.} \cd{-> list[Note]} is not only for Pylance: FastAPI reads it, checks what the function returned against it, keeps only the fields the model declares, and turns the result into JSON. This becomes important in chapter 4, where a user has a password hash that must never be sent.
+
+\subsection{One item: path parameters and 404}
+
+\begin{py}
+from fastapi import HTTPException
+
+
+@app.get("/api/notes/{note_id}")
+def get_note(note_id: str) -> Note:
+	note = next((n for n in notes if n.id == note_id), None)
+	if note is None:
+		raise HTTPException(status_code=404, detail="note not found")
+	return note
+\end{py}
+
+\begin{itemize}
+\item \cd{{note_id}} in the path is a \textbf{path parameter}. FastAPI takes that part of the URL and passes it to the function argument with the same name. For \cd{/api/notes/2}, \cd{note_id} is \cd{"2"}.
+\item The argument's type hint is used for conversion and checking. With \cd{note_id: int}, a request for \cd{/api/notes/abc} would be rejected before your function runs (chapter 3c does this).
+\item \cd{raise HTTPException(status_code=404, detail="...")} stops the route and sends that status with the body \cd{{"detail": "note not found"}}. It is an exception, so it works from any depth of function calls.
+\end{itemize}
+
+\subsection{Deleting}
+
+\begin{py}
+@app.delete("/api/notes/{note_id}", status_code=204)
+def delete_note(note_id: str) -> None:
+	global notes
+	notes = [n for n in notes if n.id != note_id]
+\end{py}
+
+\begin{itemize}
+\item \cd{status_code=204} sets the status for a successful response: ``No Content''. The response has no body.
+\item The comprehension builds a new list without the deleted note. Assigning to \cd{notes} inside a function would normally create a new \emph{local} variable; \cd{global notes} says ``I mean the module-level \cd{notes}''. (Changing the list in place, like \cd{notes.append(...)}, doesn't need \cd{global}, because it doesn't assign the name.)
+\item Deleting a note that doesn't exist also answers \cd{204}. The goal, ``this note doesn't exist'', is reached either way. Answering \cd{404} would also be defensible; what matters is being consistent.
+\end{itemize}
+
+\subsection{Creating: request bodies}
+
+\begin{py}
+class NoteCreate(BaseModel):
+	content: str = Field(min_length=1)
+	important: bool = False
+
+
+def generate_id() -> str:
+	max_id = max((int(n.id) for n in notes), default=0)
+	return str(max_id + 1)
+
+
+@app.post("/api/notes", status_code=201)
+def create_note(data: NoteCreate) -> Note:
+	new_note = Note(id=generate_id(), content=data.content, important=data.important)
+	notes.append(new_note)
+	return new_note
+\end{py}
+
+\begin{itemize}
+\item A route argument typed with a Pydantic model is read from the \textbf{request body}. FastAPI parses the JSON, builds a \cd{NoteCreate} from it, and only then calls your function.
+\item If the body breaks a rule (\cd{content} missing, empty, or not a string), your function never runs. FastAPI answers \cd{422 Unprocessable Content} with a list of what was wrong (chapter 3d looks at this body in detail).
+\item \cd{Field(min_length=1)} attaches a rule to a field, on top of its type. \cd{important: bool = False} gives a default, which makes the field optional.
+\item \cd{NoteCreate} has no \cd{id}: the client must not choose it. Having separate models for what comes \emph{in} and what goes \emph{out} is a pattern you will use for every resource.
+\item \cd{max(..., default=0)} returns 0 for an empty list instead of raising \cd{ValueError}.
+\end{itemize}
+
+\subsection{Where FastAPI gets each argument from}
+
+A request carries data in three places: the \textbf{path} (\cd{/api/notes/5}), the \textbf{query string} after a \cd{?} (\cd{?q=hi&limit=3}, pairs of \cd{name=value} joined with \cd{&}), and the \textbf{body}. You never tell FastAPI where to look. It decides for each argument of your function by these rules, in this order:
+
+\begin{enumerate}
+\item The argument's name appears in the path as \cd{{name}}: it's a \textbf{path parameter}.
+\item Its type is a Pydantic model: it's read from the \textbf{body}.
+\item Its default is \cd{Depends(...)}: FastAPI calls that function and passes the result (chapter 3c).
+\item Its type is \cd{Request}: FastAPI passes the raw request object (see Middleware below).
+\item Anything else with a simple type (\cd{int}, \cd{str}, \cd{bool}, \ldots): it's a \textbf{query parameter}. With a default value it's optional; without one it's required.
+\end{enumerate}
+
+\begin{py}
+@app.get("/items/{item_id}")
+def read_item(item_id: int, q: str | None = None, limit: int = 10):
+	return {"item_id": item_id, "q": q, "limit": limit}
+\end{py}
+
+\begin{center}
+\begin{tabularx}{0.95\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Request} & \textbf{Result} \\
+\midrule
+\cd{GET /items/5?q=hi&limit=3} & \cd{{"item_id": 5, "q": "hi", "limit": 3}} \\
+\cd{GET /items/5} & \cd{{"item_id": 5, "q": null, "limit": 10}}: defaults used \\
+\cd{GET /items/5?limit=abc} & \cd{422}, with \cd{"loc": ["query", "limit"]} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Every value in a URL is text. FastAPI converts it to the declared type with Pydantic's rules, which is why \cd{"5"} becomes the integer \cd{5}, and why a value that can't be converted gives a \cd{422}. The \cd{loc} in the error says where the bad value was: \cd{"path"}, \cd{"query"} or \cd{"body"}.
+
+\subsection{The interactive docs}
+
+Open \url{http://localhost:3001/docs}. FastAPI builds this page from your routes and models: every route, its parameters, the body it expects and the responses. How: FastAPI collects everything it knows about your routes into one JSON document in a standard format called \textbf{OpenAPI}, served at \cd{/openapi.json}. The \cd{/docs} page is a ready-made web app (Swagger UI) that reads that document and draws the forms. \textbf{Try it out} sends real requests. This replaces the Postman or REST client used in the original course, and it's always up to date because it is generated from the code.
+
+\subsection{Returning HTML}
+
+A route can also return a page instead of JSON:
+
+\begin{py}
+from fastapi.responses import HTMLResponse
+
+
+@app.get("/", response_class=HTMLResponse)
+def root() -> str:
+	return "<h1>Hello World!</h1>"
+\end{py}
+
+\cd{response_class=HTMLResponse} sends the string as-is with \cd{Content-Type: text/html}, so the browser shows it as a page.
+
+\subsection{Middleware}
+
+A \textbf{middleware} is a function that runs for \emph{every} request, around whichever route handles it. It is the place for things that apply to everything, such as logging:
+
+\begin{py}
+import time
+
+from fastapi import Request
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+	start = time.perf_counter()
+	response = await call_next(request)
+	ms = (time.perf_counter() - start) * 1000
+	print(request.method, request.url.path, response.status_code, f"{ms:.1f} ms")
+	return response
+\end{py}
+
+\begin{itemize}
+\item Code before \cd{await call_next(request)} runs before the route; \cd{call_next} runs the matching route and returns its response; code after it runs after the route.
+\item \cd{time.perf_counter()} is a clock meant for measuring durations.
+\item The middleware must be \cd{async def}, because \cd{call_next} is awaited.
+\end{itemize}
+
+\textbf{The Request object.} \cd{request} is an object Starlette builds from the incoming request, before any route runs. It gives you everything the client sent:
+
+\begin{center}
+\begin{tabularx}{0.9\textwidth}{@{}lX@{}}
+\toprule
+\textbf{Attribute} & \textbf{For POST /x?a=1 with a JSON body} \\
+\midrule
+\cd{request.method} & \cd{"POST"} \\
+\cd{request.url.path} & \cd{"/x"} \\
+\cd{request.url.query} & \cd{"a=1"} \\
+\cd{request.query_params} & a dict-like object, \cd{{"a": "1"}} \\
+\cd{request.headers} & a dict-like object, \cd{request.headers["content-type"]} is \cd{"application/json"} \\
+\cd{request.client.host} & the client's address \\
+\cd{await request.body()} & the raw body as bytes, \cd{b'{"k":"v"}'} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\textbf{call\_next and the response.} \cd{call_next} is a function FastAPI gives your middleware. Calling it passes the request on, to the next middleware if there is one, and finally to the matching route; it returns the response that came back. That response is an object too: \cd{response.status_code}, \cd{response.headers}. A middleware may change it, or even return a different one, before it goes to the client.
+
+\textbf{Reading the body in a middleware.} \cd{await request.body()} returns the raw body as \cd{bytes}, and \cd{.decode()} turns it into a string. It must be awaited because the body may still be arriving over the network when the middleware starts: the request object is created as soon as the headers are in. (Starlette, which FastAPI is built on, keeps the body after the first read, so the route can still read it.)
+
+\subsection{Exercises 3.1--3.8}
+
+Create \cd{chapter3/phonebook_backend/main.py}. Ids are strings for now.
+
+\begin{exercise}{3.1: Phonebook backend, step 1}
+\cd{GET /api/persons} returns this hard-coded list:
+\begin{py}
+Person(id="1", name="Maren Holt", number="040-123456"),
+Person(id="2", name="Idris Okafor", number="39-44-5323523"),
+Person(id="3", name="Lena Vasquez", number="12-43-234345"),
+Person(id="4", name="Tobias Rhee", number="39-23-6423122"),
+\end{py}
+Run it with \cd{uvicorn main:app --reload --port 3001}.
+\end{exercise}
+
+\begin{exercise}{3.2: Phonebook backend, step 2}
+\cd{GET /info} returns an HTML page showing how many persons the phonebook has and the time of the request (\cd{datetime.now()}).
+\end{exercise}
+
+\begin{exercise}{3.3: Phonebook backend, step 3}
+\cd{GET /api/persons/{id}} returns one person, or \cd{404} if there is none.
+\end{exercise}
+
+\begin{exercise}{3.4: Phonebook backend, step 4}
+\cd{DELETE /api/persons/{id}} removes a person and answers \cd{204}.
+\end{exercise}
+
+\begin{exercise}{3.5: Phonebook backend, step 5}
+\cd{POST /api/persons} adds a person and answers \cd{201} with it. Generate the id randomly, from a range big enough that collisions are unlikely. The \cd{secrets} module is made for this: \cd{secrets.token_hex(6)} returns 12 random hex characters.
+\end{exercise}
+
+\begin{exercise}{3.6: Phonebook backend, step 6}
+Reject bad requests:
+\begin{itemize}
+\item a missing or empty name or number: \cd{422}, through the request model's rules;
+\item a name that already exists: \cd{400} with \cd{{"detail": "name must be unique"}}, through \cd{HTTPException}.
+\end{itemize}
+\end{exercise}
+
+\begin{exercise}{3.7: Phonebook backend, step 7}
+Add a middleware that logs every request: method, path, status and time taken.
+\end{exercise}
+
+\begin{exercise}{3.8*: Phonebook backend, step 8}
+For \cd{POST} requests, also log the body.
+\end{exercise}
+
+%=====================================================================
+\section{b. Deploying the app to the internet}
+
+\subsection{Connecting the frontend to your backend}
+
+Your notes frontend still talks to the mock server. Point it at FastAPI. The backend's URLs start with \cd{/api}, so in \cd{note_service.py} change:
+
+\begin{py}
+BASE_URL = "http://localhost:3001/notes"
+\end{py}
+
+to:
+
+\begin{py}
+import os
+
+BACKEND_URL = os.environ.get("BACKEND_URL", "http://localhost:3001")
+BASE_URL = f"{BACKEND_URL}/api/notes"
+\end{py}
+
+Locally nothing needs to be set: the default is your local backend. Once deployed, the frontend gets the backend's internet address through the environment variable \cd{BACKEND_URL}, without any code change. Start both (\cd{uvicorn ...} in one terminal, \cd{reflex run} in another), and the app works as before, now on your own server.
+
+\textbf{The frontend didn't change otherwise.} The mock server and FastAPI speak the same REST conventions, so only the URL changed. That's the payoff of keeping all requests in one service module.
+
+\subsection{Why there's no CORS problem}
+
+The original course has a whole section on \textbf{CORS}. Browsers enforce a rule called the \emph{same-origin policy}: JavaScript on a page from one origin (scheme + host + port, such as \url{http://localhost:3000}) may not read responses from another origin (\url{http://localhost:3001}) unless that server explicitly allows it with special headers. That's CORS, Cross-Origin Resource Sharing.
+
+In a Reflex app, the requests to your backend are not made by the browser. They're made by \emph{httpx, in your event handlers, on the Reflex server}. The same-origin policy is a browser rule; it doesn't apply to one server talking to another. So FastAPI needs no CORS setup here. If you ever call it from JavaScript in a browser, add FastAPI's \cd{CORSMiddleware}.
+
+\subsection{Render}
+
+\textbf{What hosting means.} So far your servers run on your own computer, at \cd{localhost}. Nobody else can reach them, and they stop when you close the terminal. To be usable by others, a server must run on a computer that is always on, connected to the internet, with a public address. Renting such a computer and setting it up yourself (installing Python, keeping it updated, restarting the app if it crashes, setting up HTTPS certificates) is a lot of work. A \textbf{hosting service} does that part for you: you give it your code and the commands to run it.
+
+\textbf{Render} is a hosting service with a free plan. It runs your app on its computers and gives it an address like \url{https://notes-backend-xxxx.onrender.com}. Each app you host there is a \textbf{web service}.
+
+\textbf{What Render does on every deploy:}
+\begin{enumerate}
+\item It downloads (clones) your repository from GitHub, at the latest commit.
+\item It goes into the \textbf{root directory} you configured and runs your \textbf{build command}, which installs the dependencies.
+\item It runs your \textbf{start command}, which starts the server, and passes it a port number in the environment variable \cd{PORT}.
+\item It points your public address at the new version, and stops the old one. Render's own servers receive the HTTPS traffic from the internet, handle the encryption, and forward each request as plain HTTP to your app's port.
+\end{enumerate}
+
+Each backend needs its own \cd{requirements.txt}, because Render installs exactly that file. For the notes backend at this point:
+
+\begin{code}
+fastapi==0.142.2
+uvicorn==0.54.0
+\end{code}
+
+Commit and push. Then, on Render:
+
+\begin{enumerate}
+\item Sign up with GitHub and create a \textbf{New Web Service}. Choose your repository.
+\item \textbf{Root Directory}: \cd{chapter3/notes_backend}. Render runs every command from there.
+\item \textbf{Runtime}: Python. \textbf{Instance type}: Free.
+\item \textbf{Build Command}: \cd{pip install -r requirements.txt}.
+\item \textbf{Start Command}: \icode|uvicorn main:app --host 0.0.0.0 --port $PORT|.
+\item Under \textbf{Environment}, add \cd{PYTHON_VERSION} with your local version (for example \cd{3.13.16}), so the server runs the same Python as you.
+\end{enumerate}
+
+Two parts of the start command are new:
+\begin{itemize}
+\item \cd{--host 0.0.0.0}. By default uvicorn listens on \cd{127.0.0.1}, which accepts connections only from the same computer. \cd{0.0.0.0} means ``every network interface'', so connections from outside reach it.
+\item \icode|--port $PORT|. Render chooses the port and passes it in the environment variable \cd{PORT}. The shell replaces \icode|$PORT| with its value.
+\end{itemize}
+
+Every push to GitHub now redeploys the service automatically. The service's dashboard has several tabs:
+\begin{itemize}
+\item \textbf{Events}: the list of deploys, each with its commit and its state (in progress, ``Deploy live'', failed).
+\item \textbf{Logs}: everything your server prints, including your middleware's lines and any traceback. When a deploy fails or the app answers \cd{500}, look here first.
+\item \textbf{Environment}: the environment variables your app receives. Saving a change redeploys the service.
+\item \textbf{Settings}: the root directory, build and start commands you entered when creating the service.
+\end{itemize}
+
+\textbf{The free plan sleeps.} A free service stops after about 15 minutes without requests. The next request wakes it, which takes up to a minute. Data kept in memory is lost on every sleep and every deploy, so for now the notes reset to the three starting ones. Chapter 3c fixes that.
+
+\subsection{Deploying the Reflex frontend}
+
+The frontend is a second web service:
+
+\begin{itemize}
+\item \textbf{Root Directory}: \cd{chapter2/notes}.
+\item \textbf{Build Command}: \cd{pip install -r requirements.txt}, with a \cd{requirements.txt} containing \cd{reflex} and \cd{httpx} with their versions.
+\item \textbf{Start Command}: \icode|reflex run --env prod --single-port --backend-port $PORT|.
+\item \textbf{Environment}: \cd{BACKEND_URL} = your backend's Render address, without a trailing slash; and \cd{PYTHON_VERSION}.
+\end{itemize}
+
+What the start command does:
+\begin{itemize}
+\item \cd{--env prod} builds an optimised, minified version of the JavaScript, instead of the development server with automatic reloading.
+\item \cd{--single-port} serves the compiled page and the Reflex backend (its WebSocket) from \emph{one} port, because Render gives each service only one. It listens on \cd{0.0.0.0} by itself.
+\item \icode|--backend-port $PORT| makes that one port Render's.
+\end{itemize}
+
+The page finds its backend by itself: when no API URL is configured, the JavaScript connects to the same address it was loaded from. The first start takes a few minutes, because the production build runs at startup.
+
+\subsection{Exercises 3.9--3.11}
+
+\begin{exercise}{3.9: Phonebook backend, step 9}
+Make the phonebook frontend use your backend: read \cd{BACKEND_URL} from the environment with a local default, and use the \cd{/api/persons} paths. Everything except changing a number should work (the backend has no update route yet).
+\end{exercise}
+
+\begin{exercise}{3.10: Phonebook backend, step 10}
+Deploy the phonebook backend to Render. Check \cd{/api/persons} and \cd{/info} at its address.
+\end{exercise}
+
+\begin{exercise}{3.11: Full stack phonebook}
+Deploy the phonebook frontend to Render, pointing at the deployed backend. Add both addresses to \cd{README.md} at the root of your repository.
+\end{exercise}
+
+%=====================================================================
+\section{c. Saving data to PostgreSQL}
+
+Right now your backends forget everything on every restart, deploy or sleep, because the data is a Python list in memory. This section stores it in a \textbf{database}, a separate program built to keep data safe and permanent.
+
+\subsection{Databases, relational databases and SQL}
+
+A \textbf{database server} is a program whose only job is storing data:
+\begin{itemize}
+\item it writes to disk and survives restarts;
+\item it handles many clients at once;
+\item it makes sure two simultaneous changes don't corrupt each other.
+\end{itemize}
+
+Your backend becomes its client, just as the Reflex backend is a client of your FastAPI backend.
+
+\textbf{PostgreSQL} (``Postgres'') is a \textbf{relational database}. It stores data in \textbf{tables}, which work like spreadsheets:
+
+\begin{code}
+table: notes
+┌────┬──────────────────────────┬───────────┐
+│ id │ content                  │ important │   ← columns: fixed names and types
+├────┼──────────────────────────┼───────────┤
+│  1 │ HTML is easy             │ true      │   ← rows: one per note
+│  2 │ Browser can execute only │ false     │
+└────┴──────────────────────────┴───────────┘
+\end{code}
+
+\begin{itemize}
+\item Every \textbf{column} has a name and a type (\cd{integer}, \cd{text}, \cd{boolean}, \ldots). The database refuses values of the wrong type.
+\item Every row has a \textbf{primary key}, here \cd{id}: a value that uniquely identifies the row. The database creates it automatically (1, 2, 3, \ldots) when a row is inserted, using a \textbf{sequence}, a counter that only goes up and never hands out the same number twice, even after rows are deleted. That gives you server-generated ids for free.
+\end{itemize}
+
+You talk to the database in \textbf{SQL}:
+
+\begin{code}
+SELECT * FROM notes WHERE important = true;
+INSERT INTO notes (content, important) VALUES ('new note', false);
+UPDATE notes SET important = true WHERE id = 2;
+DELETE FROM notes WHERE id = 2;
+\end{code}
+
+How to read them:
+\begin{itemize}
+\item \cd{SELECT columns FROM table WHERE condition} reads rows. \cd{*} means ``every column''. Without \cd{WHERE}, every row is returned.
+\item \cd{INSERT INTO table (columns) VALUES (values)} adds a row. The \cd{id} isn't listed, so the database fills it in.
+\item \cd{UPDATE table SET column = value WHERE condition} changes the rows that match. Without \cd{WHERE} it would change \emph{every} row.
+\item \cd{DELETE FROM table WHERE condition} removes the rows that match, again every row without \cd{WHERE}.
+\end{itemize}
+Text values are written in single quotes, and every statement ends with \cd{;}.
+
+In this chapter you won't write SQL by hand. \textbf{SQLAlchemy} writes it for you from Python code (chapter 13 goes deeper into SQL itself). Still, every SQLAlchemy call below ends up as one of these four kinds of statement, and keeping that in mind makes SQLAlchemy much easier to understand.
+
+\subsection{A database in the cloud: Neon}
+
+Your backend runs on Render, so the database must be reachable from the internet too. We use \textbf{Neon}, a hosted PostgreSQL service. Its free plan is permanent and needs no credit card, gives 1 GB of storage per project, and \textbf{suspends the database after 5 minutes without use}; it wakes on the next query, similar to Render's sleeping. The original course uses MongoDB Atlas the same way: one hosted database for development and production.
+
+\begin{enumerate}
+\item Sign up at neon.com, with GitHub or Google.
+\item Create a project named \cd{fso-py} and pick the region closest to you.
+\item On the project dashboard, click \textbf{Connect}. Neon shows a \textbf{connection string}, something like:
+\end{enumerate}
+
+\begin{code}
+postgresql://neondb_owner:AbC123xyz@ep-cool-name-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+\end{code}
+
+That one line contains everything needed to connect:
+
+\begin{code}
+postgresql://  neondb_owner : AbC123xyz @ ep-cool-name-...neon.tech / neondb ? sslmode=require&...
+└─ scheme ─┘   └── user ──┘  └password┘  └────────── host ────────┘ └─db──┘ └─ options: always encrypt ─┘
+\end{code}
+
+\textbf{The password is in the string, so the whole string is a secret.} It never goes into code or Git.
+
+\textbf{What you see in Neon's dashboard.} A \textbf{project} is your space in Neon. Inside it, Neon creates a \textbf{branch} called \cd{main}: a complete copy of a PostgreSQL server's data (Neon can make more branches, like Git branches, but you only need \cd{main}). The branch holds a \textbf{database} named \cd{neondb} and a \textbf{role} (a user account) named \cd{neondb_owner}, which are the database and user in the string above. The left menu has \textbf{Tables}, which shows each table's rows like a spreadsheet, and \textbf{SQL Editor}, where you can type SQL and run it directly.
+
+\subsection{Installing the libraries}
+
+From the repo root, with the venv active:
+
+\begin{code}
+pip install sqlalchemy "psycopg[binary]" python-dotenv
+pip freeze > requirements.txt
+\end{code}
+
+\begin{itemize}
+\item \textbf{SQLAlchemy} (2.1.3) turns your Python code into SQL, and the results back into Python objects.
+\item \textbf{psycopg} (3.3.6) is the \textbf{driver}: the low-level library that actually connects to PostgreSQL and sends SQL to it. SQLAlchemy uses it underneath; you never call it directly. The \cd{[binary]} extra installs a ready-built version, so nothing needs compiling.
+\item \textbf{python-dotenv} (1.2.4) loads environment variables from a file, as explained below.
+\end{itemize}
+
+\subsection{Why two libraries to reach one database}
+
+PostgreSQL is a separate program, usually on another computer. It doesn't understand Python; it understands SQL, sent over a network connection in PostgreSQL's own message format (its \textbf{wire protocol}). Getting from your Python code to it takes several layers:
+
+\begin{code}
+your code         note = Note(content="hi"); db.add(note); db.commit()
+   │
+SQLAlchemy ORM    keeps track of your objects, decides which SQL is needed
+   │
+SQLAlchemy Core   writes the SQL text:  INSERT INTO notes (content, important)
+                  VALUES (%(content)s, %(important)s) RETURNING notes.id
+   │
+psycopg           opens the connection, sends the SQL and the values, reads the reply
+   │  network
+PostgreSQL        runs the statement, stores the row, answers with the new id
+\end{code}
+
+\textbf{What psycopg does.} It's the only part that knows PostgreSQL's wire protocol. With psycopg alone you could already use the database: connect, send an SQL string, get back rows as tuples like \cd{(1, 'HTML is easy', True)}. Every Python program that talks to PostgreSQL uses a driver like this underneath.
+
+\textbf{What SQLAlchemy adds on top.} Working with the driver directly means writing SQL strings by hand, remembering which position in each tuple is which column, and converting rows into objects and back yourself. It also invites a classic security hole, \textbf{SQL injection}:
+
+\begin{py}
+# never do this
+name = request_data["name"]                # what the user typed
+sql = f"SELECT * FROM persons WHERE name = '{name}'"
+\end{py}
+
+If someone types \cd{x' OR '1'='1} as their name, the SQL becomes \cd{... WHERE name = 'x' OR '1'='1'}, which matches every row: the user's text has become part of the command. SQLAlchemy never pastes values into the SQL text. It writes named placeholders, such as \icode|%(content)s| above, and sends the values separately, so the database always treats them as data. SQLAlchemy has two layers:
+
+\begin{itemize}
+\item \textbf{Core} builds SQL from Python expressions. It also manages connections. For example, \cd{select(Note).where(Note.id == 5)} becomes this SQL, with the value \cd{5} sent separately:
+\begin{code}
+SELECT notes.id, notes.content, notes.important FROM notes WHERE notes.id = %(id_1)s
+\end{code}
+\item The \textbf{ORM} (Object--Relational Mapper) sits on top. You describe each table as a Python class, and work with objects; the ORM decides which SQL statements are needed to make the database match them.
+\end{itemize}
+
+This chapter uses the ORM, which uses Core, which uses psycopg.
+
+Also add them to \cd{chapter3/notes_backend/requirements.txt}, which Render uses:
+
+\begin{code}
+fastapi==0.142.2
+uvicorn==0.54.0
+sqlalchemy==2.1.3
+psycopg[binary]==3.3.6
+python-dotenv==1.2.4
+\end{code}
+
+\subsection{Keeping the secret in .env}
+
+In 2e you typed \cd{export WEATHER_API_KEY=...} in every new terminal. \textbf{python-dotenv} saves that work: you write variables into a file named \cd{.env}, and your code loads them into the environment at startup. Create \cd{chapter3/notes_backend/.env}:
+
+\begin{code}
+DATABASE_URL=postgresql+psycopg://neondb_owner:AbC123xyz@ep-cool-name-123456.eu-central-1.aws.neon.tech/neondb?sslmode=require&channel_binding=require
+\end{code}
+
+\textbf{Change the start of Neon's string from} \cd{postgresql://} \textbf{to} \cd{postgresql+psycopg://}. SQLAlchemy supports several PostgreSQL drivers, and the part after \cd{+} tells it which one to use. With plain \cd{postgresql://}, it looks for an older driver (psycopg2) that you didn't install.
+
+\textbf{Check that Git ignores it.} Your \cd{.gitignore} should contain \cd{.env}, so \cd{git status} must \emph{not} list the file. Verify this once, now. A committed database password is public as soon as you push, even if you delete it in a later commit, because Git history keeps it.
+
+\subsection{The new file structure}
+
+The backend grows from one file to four, each with one job:
+
+\begin{code}
+chapter3/notes_backend/
+├── .env                ← NEW: DATABASE_URL (secret, ignored by Git)
+├── requirements.txt
+├── main.py             ← the app and its routes
+├── database.py         ← NEW: the connection to the database
+├── models.py           ← NEW: database tables, as Python classes (SQLAlchemy)
+└── schemas.py          ← NEW: shapes of request and response bodies (Pydantic)
+\end{code}
+
+uvicorn runs from this folder, so the files import each other directly, \cd{from database import ...}, without the leading dot used in Reflex apps.
+
+\subsection{database.py: connecting}
+
+\begin{py}
+import os
+
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+
+load_dotenv()
+
+DATABASE_URL = os.environ["DATABASE_URL"]
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine)
+
+
+class Base(DeclarativeBase):
+	pass
+
+
+def get_db():
+	db = SessionLocal()
+	try:
+		yield db
+	finally:
+		db.close()
+\end{py}
+
+Piece by piece:
+
+\begin{itemize}
+\item \cd{load_dotenv()} reads \cd{.env} and puts its variables into \cd{os.environ}. On Render there's no \cd{.env} file: you set \cd{DATABASE_URL} in Render's dashboard, and \cd{load_dotenv()} simply finds nothing to load. \textbf{A variable that is already set is never overwritten by the file.} Chapter 4b relies on this.
+\item \cd{create_engine(...)} creates the \textbf{engine}, the object that knows how to reach the database. It doesn't connect yet. It keeps a \textbf{connection pool}: a few open connections that it reuses, because opening a new database connection is slow (several network round trips, plus setting up encryption).
+\item \cd{pool_pre_ping=True} matters with Neon. When Neon suspends after 5 minutes, the connections waiting in the pool are cut. Without this option, the next request would take a dead connection from the pool and fail. With it, the engine first sends a tiny test query, and replaces a dead connection with a fresh one.
+\item \cd{sessionmaker(bind=engine)} returns a \emph{factory}: a class you call to create a new \textbf{session} that uses this engine. \cd{SessionLocal()} creates one. A session is your workspace for one piece of work with the database: you load objects through it, change them, add new ones, and \textbf{commit} to save everything at once. How it does that is explained in detail after the routes.
+\item \cd{Base} is the parent class for your table classes (next file). \cd{DeclarativeBase} gives it the machinery that turns a class into a table description. When Python runs the body of a class that inherits from \cd{Base}, that machinery reads the class's \cd{__tablename__} and column declarations and registers a description of the table in a shared catalogue, \cd{Base.metadata}. After \cd{models.py} has been imported, \cd{Base.metadata.tables} contains \cd{{"notes": ...}}. \cd{create_all} (below) reads that catalogue. \cd{pass} just means the class body is empty: everything it needs comes from \cd{DeclarativeBase}.
+\item \cd{get_db} hands out one session per request and always closes it afterwards. It is a \textbf{generator function} (1b): calling it doesn't run it; each time it is resumed it runs until the next \cd{yield}. The code before \cd{yield} creates a session, \cd{yield db} hands the session out and pauses, and when the generator is resumed after the request, \cd{finally} closes the session. Because it's a \cd{try}/\cd{finally}, the session is closed even if the route raised an exception. How FastAPI drives it is explained below.
+\end{itemize}
+
+\textbf{Transactions.} A commit is the end of a \textbf{transaction}: everything since the last commit is saved together, or not at all. If something fails before the commit, nothing is saved, and until the commit, no other request can see your changes. That's how the database guarantees that two simultaneous requests don't leave half-finished data behind.
+
+\subsection{models.py: the table, as a Python class}
+
+\begin{py}
+from sqlalchemy.orm import Mapped, mapped_column
+
+from database import Base
+
+
+class Note(Base):
+	__tablename__ = "notes"
+
+	id: Mapped[int] = mapped_column(primary_key=True)
+	content: Mapped[str]
+	important: Mapped[bool] = mapped_column(default=False)
+\end{py}
+
+This is the \textbf{ORM} (Object--Relational Mapper) at the heart of SQLAlchemy: a Python class describes a table, each instance is one row, and each attribute is a column.
+
+\begin{itemize}
+\item \cd{__tablename__} is the table's name in the database. Name it after what one row is, in the plural: \cd{notes}, \cd{persons}.
+\item \cd{Mapped[int]} declares a column and its Python type. SQLAlchemy picks the matching database type: \cd{int} → \cd{integer}, \cd{str} → \cd{varchar}, \cd{bool} → \cd{boolean}.
+\item \cd{mapped_column(primary_key=True)} makes \cd{id} the primary key. For an integer primary key, PostgreSQL generates the values automatically.
+\item \cd{mapped_column(default=False)} sets a default for rows created without a value.
+\item A column is \textbf{required} (\cd{NOT NULL} in the database) unless its type includes \cd{| None}.
+\end{itemize}
+
+\textbf{One name, two meanings.} After the class is set up, \cd{Note.content} on the \emph{class} and \cd{note.content} on an \emph{object} are different things:
+\begin{itemize}
+\item \cd{note.content}, on an object, is the value of that row's column: a normal \cd{str}.
+\item \cd{Note.content}, on the class, is a column object (an \cd{InstrumentedAttribute}). Comparing it doesn't give \cd{True} or \cd{False}; it builds a piece of SQL. \cd{Note.content == "hi"} becomes \cd{notes.content = :content_1}, with \cd{"hi"} kept aside as the value. That's how \cd{select(Note).where(Note.content == "hi")} works, in the same way Reflex Vars build JavaScript (1c).
+\end{itemize}
+
+\textbf{Before an object is saved.} \cd{Note(content="hi")} creates a plain Python object. Nothing is sent to the database, and the values the database will fill in don't exist yet: \cd{note.id} is \cd{None}, and so is \cd{note.important}, because \cd{default=False} is applied when the row is inserted, not when the object is created.
+
+\textbf{Two kinds of models now exist, and they're not the same thing:}
+
+\begin{center}
+\begin{tabularx}{0.95\textwidth}{@{}lXX@{}}
+\toprule
+ & \textbf{SQLAlchemy model} (\cd{models.py}) & \textbf{Pydantic schema} (\cd{schemas.py}) \\
+\midrule
+Describes & a \textbf{table} in the database & the \textbf{JSON} in a request or response \\
+Used for & reading and writing rows & validating input, shaping output \\
+Example & \cd{Note} & \cd{NoteCreate}, \cd{NoteOut} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+They often have similar fields, but they answer different questions: ``what's stored?'' versus ``what may a client send, and what do we send back?''. Keeping them apart means you can, for example, store a password hash in the table but never include it in any response schema (chapter 4).
+
+\subsection{schemas.py: request and response shapes}
+
+\begin{py}
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class NoteCreate(BaseModel):
+	content: str = Field(min_length=1)
+	important: bool = False
+
+
+class NoteUpdate(BaseModel):
+	content: str | None = Field(default=None, min_length=1)
+	important: bool | None = None
+
+
+class NoteOut(BaseModel):
+	model_config = ConfigDict(from_attributes=True)
+
+	id: int
+	content: str
+	important: bool
+\end{py}
+
+\begin{itemize}
+\item \cd{NoteCreate} is the same as in 3a.
+\item \cd{NoteUpdate} is for \cd{PATCH}. A field is optional only if it has a default value, so every field here has \cd{= None}: a PATCH sends only the fields that change. \cd{min_length=1} still applies when \cd{content} \emph{is} sent.
+\item \cd{NoteOut} is what responses contain.
+\end{itemize}
+
+\textbf{What ConfigDict is.} \cd{Field(...)} sets rules for \emph{one field}. \cd{ConfigDict} is a set of \textbf{switches for the whole model}. Each switch has a default, and you list only the ones you want to turn on. It goes in a class attribute that must be named exactly \cd{model_config}, because that's the name Pydantic looks for. \cd{ConfigDict} itself is just a dict: \cd{ConfigDict(from_attributes=True)} and \cd{{"from_attributes": True}} do the same, and the \cd{ConfigDict(...)} form only adds spell-checking in Pylance.
+
+\textbf{The switch from\_attributes.} By default, Pydantic builds a model from a \textbf{dict}, reading values as \cd{data["id"]}. Your routes will have SQLAlchemy objects instead, whose values are \textbf{attributes}: \cd{note.id}, \cd{note.content}. With \cd{from_attributes=True}, Pydantic can also read attributes:
+
+\begin{py}
+class A(BaseModel):
+	id: int
+
+class B(BaseModel):
+	model_config = ConfigDict(from_attributes=True)
+	id: int
+
+note = db.get(Note, 1)      # a database row, read as note.id
+
+A.model_validate(note)      # error: "Input should be a valid dictionary"
+B.model_validate(note)      # works: B also reads note.id
+\end{py}
+
+\textbf{model\_validate} builds a model from existing data: it reads the values, checks them against the model's fields and types, and returns a model object. Pydantic calls this validating, which is where the name comes from. \cd{NoteOut.model_validate(note)} turns a database row into the response shape.
+
+\textbf{The id is now an int.} In 3a, ids were strings because the mock server used strings and the frontends expected them. Now the database creates them, and PostgreSQL's ids are integers. The JSON now contains \cd{"id": 2} instead of \cd{"id": "2"}, so the frontends must change too (below).
+
+\subsection{main.py: the routes, using the database}
+
+\begin{py}
+from fastapi import Depends, FastAPI, HTTPException
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from database import Base, engine, get_db
+from models import Note
+from schemas import NoteCreate, NoteOut, NoteUpdate
+
+Base.metadata.create_all(engine)
+
+app = FastAPI()
+
+
+@app.get("/api/notes")
+def get_notes(db: Session = Depends(get_db)) -> list[NoteOut]:
+	notes = db.scalars(select(Note)).all()
+	return [NoteOut.model_validate(n) for n in notes]
+
+
+@app.get("/api/notes/{note_id}")
+def get_note(note_id: int, db: Session = Depends(get_db)) -> NoteOut:
+	note = db.get(Note, note_id)
+	if note is None:
+		raise HTTPException(status_code=404, detail="note not found")
+	return NoteOut.model_validate(note)
+
+
+@app.post("/api/notes", status_code=201)
+def create_note(data: NoteCreate, db: Session = Depends(get_db)) -> NoteOut:
+	note = Note(content=data.content, important=data.important)
+	db.add(note)
+	db.commit()
+	db.refresh(note)
+	return NoteOut.model_validate(note)
+
+
+@app.patch("/api/notes/{note_id}")
+def update_note(note_id: int, data: NoteUpdate, db: Session = Depends(get_db)) -> NoteOut:
+	note = db.get(Note, note_id)
+	if note is None:
+		raise HTTPException(status_code=404, detail="note not found")
+	for field, value in data.model_dump(exclude_unset=True).items():
+		setattr(note, field, value)
+	db.commit()
+	db.refresh(note)
+	return NoteOut.model_validate(note)
+
+
+@app.delete("/api/notes/{note_id}", status_code=204)
+def delete_note(note_id: int, db: Session = Depends(get_db)) -> None:
+	note = db.get(Note, note_id)
+	if note is not None:
+		db.delete(note)
+		db.commit()
+\end{py}
+
+Keep your logging middleware and the HTML root route from 3a too. They're left out here only to keep the example short.
+
+\textbf{Base.metadata.create\_all(engine)} runs once, when the server starts. It looks at every class that inherits from \cd{Base} and creates the missing tables (\cd{CREATE TABLE notes ...}). It needs \cd{models} to have been imported first, which is why it comes after the imports: a class SQLAlchemy has never seen can't be created. Tables that already exist are left alone, \textbf{even if you changed the class}: adding a column to \cd{Note} later won't add it to the existing table. Changing existing tables is called a \textbf{migration}, done with a tool called Alembic later in the course. Until then, if you change a model, delete the table in Neon's dashboard and let \cd{create_all} recreate it.
+
+\textbf{db: Session = Depends(get\_db)} is FastAPI's \textbf{dependency injection}. It reads as: ``this route needs a \cd{db}; get it by calling \cd{get_db}''. For every request, FastAPI:
+\begin{enumerate}
+\item calls \cd{get_db}, which runs up to \cd{yield} and creates a session;
+\item passes that session to your route as \cd{db};
+\item after the response is sent, resumes \cd{get_db} after \cd{yield}, so \cd{finally} closes the session.
+\end{enumerate}
+Every route gets its own fresh session and never has to open or close one. \cd{Depends} is a general tool: in chapter 4 the same mechanism provides ``the currently logged-in user'' to routes.
+
+\textbf{What \cd{db: Session} means.} \cd{Session} is the class of the object \cd{get_db} yields, imported from \cd{sqlalchemy.orm}. As a type hint it does two things: Pylance knows what \cd{db} is and can check your calls on it, and the default \cd{= Depends(get_db)} tells FastAPI (rule 3 in ``Where FastAPI gets each argument from'') that this argument comes from a dependency, not from the request.
+
+\textbf{Reading:}
+\begin{itemize}
+\item \cd{select(Note)} builds the query \cd{SELECT * FROM notes}. Building it doesn't run it.
+\item \cd{db.scalars(...)} runs it, and \cd{.all()} returns a list of \cd{Note} objects, one per row. (Without \cd{scalars}, \cd{db.execute} returns rows as tuples; \cd{scalars} takes the first item of each, here the \cd{Note}.)
+\item \cd{db.get(Note, note_id)} loads one row by primary key, or returns \cd{None} if there isn't one. It's the database version of your \cd{next(...)} search.
+\end{itemize}
+
+\textbf{Writing:}
+\begin{itemize}
+\item \cd{db.add(note)} tells the session about a new object. Nothing is sent to the database yet.
+\item \cd{db.commit()} sends every pending change (\cd{INSERT}, \cd{UPDATE}, \cd{DELETE}) and makes it permanent.
+\item \cd{db.refresh(note)} reloads the object's values from the database right away. In these routes it isn't strictly needed: after a commit, the object reloads itself the next time you read it. The next section explains exactly when \cd{refresh} matters.
+\item Changing a loaded object's attribute (\cd{setattr(note, field, value)}) is enough for SQLAlchemy to know an \cd{UPDATE} is needed at the next commit. \cd{setattr(obj, "content", "x")} is the same as \cd{obj.content = "x"}, with the attribute's name given as a string.
+\item \cd{db.delete(note)} marks the row for deletion at the next commit.
+\end{itemize}
+
+\textbf{data.model\_dump(exclude\_unset=True)} turns the Pydantic object into a dict containing \textbf{only the fields the client actually sent}. For \cd{PATCH {"important": true}} that's \cd{{"important": True}}: \cd{content} isn't included, so it isn't overwritten. Without \cd{exclude_unset}, every missing field would come back as its default, \cd{None}.
+
+\textbf{note\_id: int in the path.} FastAPI now converts the id to an integer, so \cd{/api/notes/abc} is rejected with \cd{422} before your function runs. The original course needs special error handling for a ``malformatted id'' at this point; FastAPI's validation handles it for you.
+
+\textbf{Does the route need model\_validate?} Strictly, no. With \cd{return note}, FastAPI sees the return type \cd{-> NoteOut} and does the same conversion itself, using \cd{from_attributes}. Writing \cd{model_validate} is still the better habit, for two reasons. First, the code says what it does: the function promises a \cd{NoteOut}, and \cd{return note} would actually return a \cd{Note}, a mismatch Pylance flags. Second, you see where the filtering happens: only the fields \cd{NoteOut} declares leave the server. In chapter 4 that's what keeps password hashes private.
+
+What the routes do, tested against a real PostgreSQL database:
+
+\begin{center}
+\begin{tabularx}{0.9\textwidth}{@{}Xl@{}}
+\toprule
+\textbf{Request} & \textbf{Response} \\
+\midrule
+\cd{GET /api/notes} on an empty database & \cd{200 []} \\
+\cd{POST {"content": "HTML is easy", "important": true}} & \cd{201 {"id": 1, ...}} \\
+\cd{GET /api/notes/abc} & \cd{422} \\
+\cd{GET /api/notes/999} & \cd{404} \\
+\cd{PATCH /api/notes/2 {"important": true}} & \cd{200}, only \cd{important} changed \\
+\cd{PATCH /api/notes/2 {"content": ""}} & \cd{422} \\
+\cd{DELETE /api/notes/2}, twice & \cd{204}, both times \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Inside the session}
+
+The routes above work, but several things happen that the code doesn't show: \cd{add} sends nothing, changing an attribute is enough for an \cd{UPDATE}, and the new \cd{id} appears after a commit. All of it is the \textbf{session} at work. These are the real queries SQLAlchemy sent, recorded step by step.
+
+\textbf{1. The session keeps a list of pending work (the unit of work).}
+
+\begin{py}
+note = Note(content="hi")
+db.add(note)        # no query: the session only notes "insert this later"
+db.commit()         # INSERT INTO notes (content, important) VALUES (...) RETURNING notes.id
+\end{py}
+
+A session keeps track of three groups of objects: \textbf{new} ones (added, not yet in the database), \textbf{dirty} ones (loaded, then changed), and \textbf{deleted} ones. Sending the SQL for all of them is called a \textbf{flush}. \cd{commit()} first flushes, then tells the database to make the transaction permanent. (You can also call \cd{db.flush()} yourself: the SQL is sent, so the new row gets its id, but nothing is permanent until the commit.)
+
+\textbf{2. Changing an attribute marks the object as dirty.}
+
+\begin{py}
+note = db.get(Note, 1)
+note.content = "changed"    # no query; the session now lists note as dirty
+db.commit()                 # UPDATE notes SET content=... WHERE notes.id = ...
+\end{py}
+
+Every object the session loaded is \textbf{watched}: the mapped attributes record each change. At the flush, SQLAlchemy writes an \cd{UPDATE} containing only the columns that changed. That's why the PATCH route needs nothing more than \cd{setattr} and \cd{commit}.
+
+\textbf{3. One object per row (the identity map).}
+
+\begin{py}
+a = db.get(Note, 1)
+b = db.get(Note, 1)
+a is b                       # True, and the second get sent no query at all
+\end{py}
+
+The session remembers every object it has loaded, by table and primary key. Asking again for the same row returns the \emph{same} Python object, so two parts of your code can't end up holding two different, conflicting copies of one row. \cd{db.get} even skips the query when the object is already known. (A \cd{select(...)} always runs its query, but if a row it returns is already known, you still get the existing object.) The map belongs to one session: another session loads its own, separate objects.
+
+\textbf{4. After a commit, objects are expired and reload themselves.}
+
+\begin{py}
+db.commit()
+note.id             # SELECT notes.id, notes.content, notes.important FROM notes WHERE ...
+\end{py}
+
+Once a transaction ends, other requests may change the rows at any moment, so the values in your objects could be stale. So by default \cd{commit()} marks every object as \textbf{expired}: its values are discarded, and the next time you read any attribute, the session silently runs a \cd{SELECT} and refills it. That's how \cd{note.id} has the new id after a commit: the reload reads what the database created.
+
+\textbf{5. What refresh does, and when it matters.} \cd{db.refresh(note)} does that reload \emph{immediately}, instead of at the next read. Inside a route, where the session is still open when \cd{model_validate} reads the values, there's no difference: the values would be reloaded on read anyway. It matters when the object is used \emph{after its session is closed}:
+
+\begin{py}
+with SessionLocal() as db:
+	note = Note(content="hi")
+	db.add(note)
+	db.commit()        # note is now expired
+print(note.id)         # DetachedInstanceError: there's no session left to reload it
+\end{py}
+
+Once its session is closed, an object is \textbf{detached}: it still exists in Python, but it can't load anything. With \cd{db.refresh(note)} before the end of the \cd{with} block, the values are loaded while the session is open, and \cd{print(note.id)} works. The routes in this book keep \cd{refresh} as a clear, harmless statement of ``I want the database's values now''.
+
+\textbf{6. Rollback and close.} If something goes wrong before a commit, \cd{db.rollback()} cancels the transaction: everything sent since the last commit is undone in the database, and the session forgets its pending changes. \cd{db.close()} (which \cd{get_db} calls for you) rolls back anything uncommitted, gives the connection back to the engine's pool, and detaches all its objects. That's why each request uses its own session: what one request does can never leak into another's half-finished work.
+
+\subsection{From SQL to SQLAlchemy}
+
+The SQL you know, and its SQLAlchemy 2.x equivalent:
+
+\begin{center}
+\begin{tabularx}{0.98\textwidth}{@{}lX@{}}
+\toprule
+\textbf{SQL} & \textbf{SQLAlchemy} \\
+\midrule
+\cd{SELECT * FROM persons} & \cd{db.scalars(select(Person)).all()} → a list \\
+\cd{... WHERE name = 'X'} & \cd{db.scalars(select(Person).where(Person.name == "X")).all()} \\
+first match only & \cd{db.scalar(select(Person).where(...))} → one object or \cd{None} \\
+\cd{... WHERE id = 3} & \cd{db.get(Person, 3)} → one object or \cd{None} \\
+\cd{SELECT count(*) FROM persons} & \cd{db.scalar(select(func.count()).select_from(Person))} \\
+\cd{ORDER BY name} & \cd{select(Person).order_by(Person.name)} \\
+\cd{INSERT} & \cd{db.add(obj)} then \cd{db.commit()} \\
+\cd{UPDATE} & change attributes, then \cd{db.commit()} \\
+\cd{DELETE} & \cd{db.delete(obj)} then \cd{db.commit()} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The pattern: \cd{select(...)} builds the query, then \cd{db.scalars(...)} runs it for many rows and \cd{db.scalar(...)} for one value.
+
+\begin{itemize}
+\item \cd{.where(Person.name == "X")} becomes \cd{WHERE name = 'X'}. \cd{Person.name == "X"} doesn't compare anything in Python; like a Reflex Var, the column object builds an expression that SQLAlchemy turns into SQL.
+\item \cd{func.<name>} calls any SQL function: \cd{func.count()}, \cd{func.lower(Person.name)}. Import it with \cd{from sqlalchemy import func}.
+\item \cd{select(func.count()).select_from(Person)} counts rows \emph{in the database}, without loading them into Python. Loading every row just to call \cd{len()} on the list would get slower as the table grows.
+\end{itemize}
+
+The most useful page of the documentation is SQLAlchemy's ``ORM Querying Guide'', section ``SELECT statements''.
+
+\subsection{Seeing the data}
+
+Run the backend as before (\cd{uvicorn main:app --reload --port 3001}), create a few notes in \cd{/docs}, then restart the server. \textbf{The notes are still there.}
+
+You can look at the table directly in Neon's dashboard. \textbf{Tables} shows the rows, and the \textbf{SQL Editor} runs SQL by hand. Try \cd{SELECT * FROM notes;} there. Then add a note in the SQL Editor and reload \cd{/api/notes}:
+
+\begin{code}
+INSERT INTO notes (content, important) VALUES ('from SQL', false);
+\end{code}
+
+The note appears, because the backend no longer holds data of its own; it just asks the database.
+
+\subsection{Error handling in one place}
+
+Errors can now happen in places your code doesn't control: the database might be unreachable, or Neon might fail to wake up. Instead of wrapping every route in \cd{try}/\cd{except}, FastAPI lets you register an \textbf{exception handler}: a function that runs whenever a given type of exception escapes \emph{any} route. In \cd{main.py}:
+
+\begin{py}
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import OperationalError
+
+
+@app.exception_handler(OperationalError)
+def database_unavailable(request, exc):
+	print("database error:", exc.orig)
+	return JSONResponse(status_code=503, content={"detail": "database unavailable"})
+\end{py}
+
+\begin{itemize}
+\item \cd{OperationalError} is what SQLAlchemy raises when the database can't be reached or the connection breaks. \cd{exc.orig} is the driver's original error, with the real reason.
+\item Without this handler, the client gets a generic \cd{500 Internal Server Error}, and the traceback appears in the server log.
+\item With it, the client gets \textbf{503 Service Unavailable} (``try again later'') with a readable message, and the log still records the real reason.
+\item \cd{JSONResponse} builds a response by hand, with any status code and body.
+\end{itemize}
+
+This is FastAPI's version of the original course's error-handling middleware: error responses decided in one place for the whole app.
+
+\textbf{Seeing the 503 yourself.} You have to break the connection while the server can still start. There's a catch: \cd{create_all} connects as soon as the server starts, so with a broken URL the server crashes at startup, before any request reaches your handler.
+\begin{enumerate}
+\item Comment out \cd{Base.metadata.create_all(engine)}. That's safe, because the table already exists.
+\item In \cd{.env}, point the URL at a port where nothing listens, such as \cd{localhost:5999}. You get ``connection refused'' immediately, instead of waiting for a failed name lookup.
+\item Restart uvicorn: \cd{--reload} only watches \cd{.py} files, not \cd{.env}.
+\item Open \cd{/api/notes}: \cd{503} and \cd{{"detail": "database unavailable"}}, with \cd{database error: ...} in the terminal.
+\item Undo both changes and restart.
+\end{enumerate}
+
+\subsection{Updating the notes frontend}
+
+The ids are integers now:
+\begin{itemize}
+\item In \cd{chapter2/notes/notes/models.py}, change \cd{id: str} to \cd{id: int}.
+\item Every handler or service function that takes an id changes too: \cd{toggle_importance(self, note_id: int)}, \cd{update_important(note_id: int, ...)}.
+\end{itemize}
+The frontend change matters even though Python wouldn't complain if you skipped it: \cd{Note(**n)} would accept the integer while the hints still said \cd{str}, and Pylance's checks would be based on a lie. Toggling importance now works end to end, because the backend has a \cd{PATCH} route.
+
+\subsection{Deploying}
+
+\begin{enumerate}
+\item Commit and push. \cd{git status} must \emph{not} show \cd{.env}.
+\item In Render, open the notes backend → \textbf{Environment} → add \cd{DATABASE_URL} with the same value as in your \cd{.env} (the one starting \cd{postgresql+psycopg://}).
+\item Saving the variable triggers a redeploy. When it's live, \cd{/api/notes} on Render shows the \textbf{same notes} as locally, since both use the same Neon database.
+\end{enumerate}
+
+Data now survives Render's restarts and sleeping.
+
+\subsection{Working without a network: scripts}
+
+Exercise 3.12 is a small command-line script that uses the same \cd{database.py} and \cd{models.py}. Two things are new outside of FastAPI:
+
+\begin{py}
+import sys
+
+from database import SessionLocal
+
+print(sys.argv)     # python cli.py "Noor Haddad" 050-1234567  →  ['cli.py', 'Noor Haddad', '050-1234567']
+
+with SessionLocal() as db:
+	...             # use db here; it is closed when the block ends
+\end{py}
+
+\begin{itemize}
+\item \cd{sys.argv} is the list of words typed after \cd{python}. \cd{sys.argv[0]} is the script's name. The terminal splits words at spaces, so a name with a space needs quotes.
+\item A script has no \cd{Depends}. \cd{with SessionLocal() as db:} opens a session and closes it at the end of the block, like the \cd{with} blocks in chapter 2.
+\item Import \cd{engine}, \cd{SessionLocal} and \cd{Base} from \cd{database}; don't build a second engine. Importing \cd{database} also runs its \cd{load_dotenv()}.
+\end{itemize}
+
+\subsection{Exercises 3.12--3.18}
+
+Convert the phonebook backend to PostgreSQL. Use a separate table, \cd{persons}, in the same Neon database.
+
+\begin{code}
+chapter3/phonebook_backend/
+├── .env                ← DATABASE_URL, the same value as the notes backend
+├── requirements.txt    ← add the three new packages
+├── main.py
+├── database.py
+├── models.py
+├── schemas.py
+└── cli.py              ← exercise 3.12 only
+\end{code}
+
+\textbf{Limits for these exercises:}
+\begin{itemize}
+\item SQLAlchemy ORM only, no SQL strings in Python code.
+\item Each route gets its session through \cd{Depends(get_db)}.
+\item Ids are integers: in the backend's models, schemas and path parameters, and in the frontend's \cd{Person.id} and every handler and service function that takes an id.
+\item Responses use a Pydantic schema built with \cd{model_validate}.
+\end{itemize}
+
+\begin{exercise}{3.12: Command-line database}
+Write \cd{cli.py}, which works with the \cd{persons} table from the terminal. With no arguments it prints every entry:
+\begin{code}
+$ python cli.py
+phonebook:
+Maren Holt 040-123456
+Idris Okafor 39-44-5323523
+\end{code}
+With a name and a number it adds an entry:
+\begin{code}
+$ python cli.py "Noor Haddad" 050-1234567
+added Noor Haddad number 050-1234567 to phonebook
+\end{code}
+The script must create the table if it's missing, as \cd{main.py} does.
+\end{exercise}
+
+\begin{exercise}{3.13: Phonebook database, step 1}
+\cd{GET /api/persons} returns the entries from the database. Check it in the browser and in your deployed phonebook frontend.
+\end{exercise}
+
+\begin{exercise}{3.14: Phonebook database, step 2}
+New entries from \cd{POST /api/persons} are saved to the database. The duplicate-name check from 3.6 still works, now asking the database (\cd{.where(...)} with \cd{db.scalar}).
+\end{exercise}
+
+\begin{exercise}{3.15: Phonebook database, step 3}
+\cd{DELETE /api/persons/{id}} removes the entry from the database. Check that the frontend still updates correctly.
+\end{exercise}
+
+\begin{exercise}{3.16: Phonebook database, step 4}
+Add the central exception handler for database errors (\cd{OperationalError} → \cd{503}), and see it work as described above.
+\end{exercise}
+
+\begin{exercise}{3.17*: Phonebook database, step 5}
+Add \cd{PATCH /api/persons/{id}}, which updates an entry's number. Your frontend already sends exactly this request when you confirm ``replace the old number with a new one?'' (exercise 2.15), so that feature now works end to end. A missing id returns \cd{404}, and an empty number is rejected with \cd{422}. The request body has one field, \cd{number}, and it is required.
+\end{exercise}
+
+\begin{exercise}{3.18*: Phonebook database, step 6}
+\cd{/info} and \cd{GET /api/persons/{id}} read from the database too. For \cd{/info}, count the rows in the database, without loading every person into Python.
+
+Deploy when you're done: \cd{DATABASE_URL} goes into the phonebook backend's Render environment too.
+\end{exercise}
+
+\begin{note}[Running PostgreSQL locally]
+You'll run PostgreSQL on your own machine in three places: in chapter 4 for tests (in Docker), in chapter 12 with Docker Compose, and in chapter 13 with \cd{psql} and Alembic migrations. Your code won't change for any of this: a local database is just a different \cd{DATABASE_URL}, such as \cd{postgresql+psycopg://postgres:secret@localhost:5432/notes}. SQLAlchemy doesn't care where the server runs.
+\end{note}
+
+%=====================================================================
+\section{d. Validation and Ruff}
+
+Two topics:
+\begin{enumerate}
+\item \textbf{Validation:} stopping bad data before it reaches the database, and showing the reason to the user in the frontend.
+\item \textbf{Ruff:} a tool that finds mistakes in your code and formats it automatically.
+\end{enumerate}
+
+We work in \cd{chapter3/notes_backend} and \cd{chapter2/notes} first. The exercises then do the same for the phonebook.
+
+\subsection{Where validation happens, and why on the server}
+
+\textbf{Validation} means checking that incoming data follows your rules before using it. For example: ``a note's content must be at least 5 characters''.
+
+Your frontend may check a few things, but \textbf{the frontend's checks don't protect the backend}. Your FastAPI backend has a public URL, so anyone can send requests to it directly, without your frontend; \cd{/docs} does exactly that. So the backend must check everything itself. Frontend checks only make the app nicer to use, because the user gets feedback without waiting for the server.
+
+\textbf{A reminder of how FastAPI validates.} When a route has a parameter typed with a Pydantic model, such as \cd{data: NoteCreate}:
+\begin{enumerate}
+\item FastAPI reads the JSON body of the request.
+\item It tries to build a \cd{NoteCreate} from it.
+\item If any rule fails, your function never runs. FastAPI answers \textbf{422 Unprocessable Content}: the JSON was readable, but its contents break the rules.
+\end{enumerate}
+
+All validation rules therefore go in \cd{schemas.py}.
+
+\subsection{Rule 1: length limits}
+
+\textbf{This changes existing code.} In \cd{schemas.py}, the \cd{content} field of \cd{NoteCreate} currently has \cd{Field(min_length=1)}. Change it to:
+
+\begin{py}
+content: str = Field(min_length=5, max_length=200)
+\end{py}
+
+\begin{itemize}
+\item \cd{min_length=5} rejects strings shorter than 5 characters.
+\item \cd{max_length=200} rejects longer ones. Without a maximum, someone could send a 50 MB note and you'd store it.
+\end{itemize}
+
+Try \cd{POST /api/notes} in \cd{/docs} with \cd{{"content": "abc"}}. The response is \cd{422}, with this body:
+
+\begin{code}
+{
+  "detail": [
+    {
+      "type": "string_too_short",
+      "loc": ["body", "content"],
+      "msg": "String should have at least 5 characters",
+      "input": "abc",
+      "ctx": {"min_length": 5}
+    }
+  ]
+}
+\end{code}
+
+\begin{itemize}
+\item \cd{detail} is a \textbf{list}: one entry per broken rule, since several fields can fail at once.
+\item \cd{loc} says where the problem is: \cd{["body", "content"]} means the field \cd{content} in the request body.
+\item \cd{msg} is a human-readable explanation. The frontend will show it later in this section.
+\end{itemize}
+
+\subsection{Rule 2: the same rules when updating}
+
+In the original course this is a classic bug: rules checked on create are not checked on update, so a PATCH can sneak in invalid data. In FastAPI, a PATCH body is validated by \textbf{its own model}, \cd{NoteUpdate}, so it has to carry the same rules.
+
+\textbf{This changes existing code.} In \cd{NoteUpdate}, change \cd{content} to:
+
+\begin{py}
+content: str | None = Field(default=None, min_length=5, max_length=200)
+\end{py}
+
+\begin{itemize}
+\item \cd{default=None} makes the field optional: a PATCH may leave \cd{content} out, for example when only toggling \cd{important}.
+\item \cd{| None} keeps the type honest. Writing \cd{content: str = Field(default=None, ...)} would run (Pydantic doesn't check default values), but Pylance warns ``None is not assignable to str'', and it would mislead anyone reading the code.
+\end{itemize}
+
+\textbf{The null problem.} \cd{| None} also means a client may \emph{send} \cd{{"content": null}}. Your PATCH route copies the sent fields into the database row, and \cd{None} can't be stored in a \cd{NOT NULL} column: the server would crash with a \cd{500}. The fix belongs in the route.
+
+\textbf{This changes existing code.} In \cd{main.py}, in \cd{update_note}, add \cd{exclude_none=True} to the existing \cd{model_dump} call:
+
+\begin{py}
+for field, value in data.model_dump(exclude_unset=True, exclude_none=True).items():
+\end{py}
+
+\begin{itemize}
+\item \cd{exclude_unset=True} drops fields the client didn't send.
+\item \cd{exclude_none=True} also drops fields the client sent as \cd{null}.
+\end{itemize}
+
+\begin{center}
+\begin{tabularx}{0.85\textwidth}{@{}Xl@{}}
+\toprule
+\textbf{PATCH body} & \textbf{What gets applied} \\
+\midrule
+\cd{{"content": null}} & nothing \\
+\cd{{"important": true}} & \cd{{"important": True}} \\
+\cd{{"content": "hello world", "important": null}} & \cd{{"content": "hello world"}} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The problem only appears when a field is both \textbf{optional} (it has a default) and could be \cd{None}. A required field with no \cd{None} in its type, such as the phonebook's \cd{number: str = Field(...)}, rejects \cd{null} with \cd{422} by itself.
+
+\subsection{Rule 3: ignoring surrounding spaces}
+
+\cd{"     "} (five spaces) passes \cd{min_length=5}, and so does \cd{"  a  "}. Neither is a real note. Pydantic can remove spaces at the start and end of every string \textbf{before} checking the rules.
+
+\textbf{This changes existing code.} Add a \cd{model_config} line as the first line inside both \cd{NoteCreate} and \cd{NoteUpdate}:
+
+\begin{py}
+class NoteCreate(BaseModel):
+	model_config = ConfigDict(str_strip_whitespace=True)
+
+	content: str = Field(min_length=5, max_length=200)
+	important: bool = False
+\end{py}
+
+This is the second \cd{ConfigDict} switch in the book (the first was \cd{from_attributes} in \cd{NoteOut}). Compare:
+
+\begin{py}
+class A(BaseModel):
+	content: str
+
+class B(BaseModel):
+	model_config = ConfigDict(str_strip_whitespace=True)
+	content: str
+
+A(content="  hi  ").content   # '  hi  '   switch off: the spaces stay
+B(content="  hi  ").content   # 'hi'       switch on: the spaces are removed first
+\end{py}
+
+So \cd{"  a  "} is checked as \cd{"a"} and rejected as too short, and \cd{" hello world "} is accepted and stored as \cd{"hello world"}.
+
+\begin{center}
+\begin{tabularx}{0.95\textwidth}{@{}llX@{}}
+\toprule
+\textbf{Model} & \textbf{Switch} & \textbf{Why} \\
+\midrule
+\cd{NoteCreate}, \cd{NoteUpdate} & \cd{str_strip_whitespace=True} & clean the client's input before validating it \\
+\cd{NoteOut} & \cd{from_attributes=True} & build the response from a SQLAlchemy object \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Rule 4: custom rules with field\_validator}
+
+Some rules can't be written as \cd{Field(...)} options. For those, you write a Python function and mark it as a \textbf{validator} for a field. Example: refuse notes written entirely in capital letters.
+
+\textbf{This adds code.} Add \cd{field_validator} to the existing \cd{from pydantic import ...} line, then add this method inside \cd{NoteCreate}, after \cd{important}:
+
+\begin{py}
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+
+class NoteCreate(BaseModel):
+	model_config = ConfigDict(str_strip_whitespace=True)
+
+	content: str = Field(min_length=5, max_length=200)
+	important: bool = False
+
+	@field_validator("content")
+	@classmethod
+	def not_shouting(cls, value: str) -> str:
+		if value.isupper():
+			raise ValueError("content must not be written in all capital letters")
+		return value
+\end{py}
+
+\begin{itemize}
+\item \cd{@field_validator("content")} is a decorator that tells Pydantic: ``run this function on the \cd{content} field''.
+\item \cd{@classmethod} is required by Pydantic for validators. A normal method receives the object as \cd{self}; a class method receives the \emph{class} as its first argument, named \cd{cls} by convention. Here the object doesn't exist yet, because its data is still being checked, so there's no \cd{self} to give. You won't use \cd{cls}; it just has to be there. Decorators are applied from the bottom up, so \cd{@classmethod} wraps the function first.
+\item \cd{value} is the field's value. It arrives \textbf{after} the \cd{Field} rules and the stripping, so it's already a stripped string of 5--200 characters.
+\item \textbf{Rejecting:} \cd{raise ValueError("...")}. Pydantic catches it and turns it into a \cd{422}, with \cd{msg} set to \cd{"Value error, content must not be written in all capital letters"}. Pydantic adds the \cd{"Value error, "} prefix itself.
+\item \textbf{Accepting:} \cd{return value}. Whatever you return is what gets stored, so a validator can also clean a value, not only reject it.
+\end{itemize}
+
+For the same rule on PATCH, copy the validator into \cd{NoteUpdate}. There \cd{value} can be \cd{None}, so type it \cd{value: str | None} and start with \cd{if value is None: return value}.
+
+\subsection{Rule 5: format rules with pattern}
+
+Format rules are written as a \textbf{regular expression} (regex): a small language for describing what a string looks like. \cd{Field(pattern=...)} rejects any string that doesn't match.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Piece} & \textbf{Means} \\
+\midrule
+\icode|\d| & one digit (0--9) \\
+\cd{[0-9]} & one digit from 0 to 9, ASCII only \\
+\icode|\d{3}| & exactly 3 digits \\
+\icode|\d{2,4}| & 2 to 4 digits \\
+\icode|\d+| & one or more digits \\
+\cd{-} & a literal dash \\
+\cd{^} & the start of the string \\
+\cd{$} & the end of the string \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Examples: a 5-digit postal code is \icode|^\d{5}$|; a date like \cd{2026-10-13} is \icode|^\d{4}-\d{2}-\d{2}$|. In code:
+
+\begin{py}
+postal_code: str = Field(pattern=r"^\d{5}$")
+\end{py}
+
+\begin{itemize}
+\item \textbf{Always use \cd{^} and \cd{$}.} Pydantic accepts a string if the pattern is found \emph{anywhere} in it. Without the anchors, \icode|\d{5}| would accept \cd{"abc12345xyz"}.
+\item \textbf{Write the regex as} \cd{r"..."}, a \textbf{raw string}. In a normal Python string, \icode|\| starts special characters, like \icode|\n| for a new line. In a raw string, \icode|\d| stays exactly \icode|\d|, which is what the regex needs.
+\item \icode|\d| matches digits from \emph{every} script, including Arabic-Indic ones. Use \cd{[0-9]} when only ASCII digits are allowed.
+\end{itemize}
+
+A failed pattern gives a \cd{422} with \cd{"msg": "String should match pattern '...'"}. That message is accurate, but users don't read regex. A \cd{field_validator} that raises a \cd{ValueError} with your own wording is friendlier.
+
+To experiment, use Python's \cd{re} module in the shell:
+
+\begin{py}
+>>> import re
+>>> bool(re.fullmatch(r"\d{5}", "12345"))
+True
+>>> bool(re.fullmatch(r"\d{5}", "1234"))
+False
+\end{py}
+
+\cd{re.fullmatch} requires the \emph{whole} string to match, so you don't need \cd{^} and \cd{$} there. It returns a match object or \cd{None}, which works directly in an \cd{if}.
+
+\subsection{Showing backend errors in the frontend}
+
+Right now, if the backend rejects a new note, your Reflex app crashes in that handler: \cd{note_service.create} calls \cd{response.raise_for_status()}, which turns the \cd{422} into an \cd{httpx.HTTPStatusError}, and \cd{add_note} doesn't catch it. The fix has two parts: read the error message out of the response, and show it in the error box from 2e.
+
+\textbf{Part 1: reading the message.} The error body has two shapes:
+\begin{itemize}
+\item \cd{422} from validation: \cd{detail} is a \textbf{list} of errors, as in Rule 1.
+\item \cd{400} or \cd{404} from your own \cd{HTTPException(...)}: \cd{detail} is a plain \textbf{string}, such as \cd{"name must be unique"}.
+\end{itemize}
+
+The service is the part of the frontend that knows about HTTP, so the conversion goes there. \textbf{This adds code} at the end of \cd{chapter2/notes/notes/services/note_service.py}:
+
+\begin{py}
+def error_detail(error: httpx.HTTPStatusError) -> str:
+	"""Turn the error body sent by the backend into one readable message"""
+	detail = error.response.json()["detail"]
+	if isinstance(detail, str):
+		return detail
+	return "; ".join(e["msg"].removeprefix("Value error, ") for e in detail)
+\end{py}
+
+\begin{itemize}
+\item \cd{error.response} is the response that caused the exception, and \cd{.json()} parses its body.
+\item \cd{isinstance(detail, str)} checks whether \cd{detail} is a string. If it is, it's the \cd{400}/\cd{404} shape and can be returned as is.
+\item Otherwise it's the \cd{422} list. The generator expression takes each entry's \cd{msg} and removes Pydantic's prefix (\cd{str.removeprefix} returns the string without that start, or unchanged if it doesn't start with it), and \cd{"; ".join(...)} combines the messages into one string.
+\end{itemize}
+
+\textbf{Part 2: showing it. This changes existing code}: \cd{add_note} in \cd{chapter2/notes/notes/notes.py} becomes:
+
+\begin{py}
+@rx.event
+async def add_note(self, form_data: dict[str, typing.Any]):
+	try:
+		created = await note_service.create(content=self.new_note, important=random() < 0.5)
+	except httpx.HTTPStatusError as error:
+		if error.response.status_code in (400, 422):
+			self.error_message = note_service.error_detail(error)
+			return NoteState.clear_error_later
+		raise
+	self.notes.append(created)
+	self.new_note = ""
+\end{py}
+
+This is the same pattern as \cd{toggle_importance}. For the statuses we understand, the message goes into \cd{error_message}, and the background event clears it after 5 seconds. Any other status is re-raised, so real bugs still show up in the terminal. The final \cd{raise} matters for another reason too: without it, a \cd{500} would fall through to \cd{self.notes.append(created)} while \cd{created} was never assigned, and crash with a confusing \cd{UnboundLocalError}. \cd{self.new_note = ""} only runs on success, so after an error the user's text stays in the input and they can fix it.
+
+Try it: run the backend and the frontend, then save \cd{"abc"}, then \cd{"HELLO WORLD"}. Each time, a red box shows the backend's own message.
+
+\subsection{Ruff: linting and formatting}
+
+A \textbf{linter} reads your code without running it and reports likely mistakes: unused variables, imports you never use, code that can never run. A \textbf{formatter} rewrites your code's layout (spacing, line breaks, quotes) into one consistent style. \textbf{Ruff} does both. It replaces ESLint from the original course.
+
+\textbf{Installing it as a development tool.} Ruff is needed only while you write code, never by the running apps. Tools like this are \textbf{development dependencies}. They go in a separate file at the repo root, \cd{requirements-dev.txt}, and \textbf{never} in the \cd{requirements.txt} files Render uses, which would install them for no reason. Create \cd{fso-py/requirements-dev.txt}:
+
+\begin{code}
+ruff==0.17.1
+\end{code}
+
+and install it from the repo root: \cd{pip install -r requirements-dev.txt}.
+
+\textbf{Configuring it.} Ruff reads its settings from \cd{ruff.toml}. It searches the folder of the file being checked, then each parent folder, so one file at the repo root covers every app. Create \cd{fso-py/ruff.toml}:
+
+\begin{code}
+line-length = 100
+
+[lint]
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = ["F541"]
+
+[lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends"]
+
+[format]
+indent-style = "tab"
+\end{code}
+
+\begin{itemize}
+\item \cd{line-length = 100}: the formatter wraps lines longer than 100 characters. The default is 88.
+\item \cd{select} chooses which rule groups are on. Each rule has a code made of letters for the group and a number:
+\begin{itemize}
+\item \cd{E4}, \cd{E7}, \cd{E9}: basic errors (bad comparisons like \cd{== None}, statements Python can't parse);
+\item \cd{F}: real mistakes, such as unused imports, unused variables and undefined names;
+\item \cd{B}: ``bugbear'', common bug patterns, such as a \cd{try}/\cd{except} that silently hides every error.
+\end{itemize}
+\item \cd{ignore = ["F541"]} turns off the rule against f-strings without placeholders, since you sometimes write those on purpose.
+\item \cd{[lint.flake8-bugbear]}: rule \cd{B008} warns against calling a function in a default argument, as in \cd{db: Session = Depends(get_db)}. In normal Python that's a real trap, because the call happens \emph{once}, when the function is defined, not on each call. FastAPI's \cd{Depends(...)} is designed to be used exactly this way (it only records ``call \cd{get_db} per request''), so this setting tells Ruff that \cd{Depends} is safe.
+\item \cd{indent-style = "tab"}: the formatter keeps your tabs instead of converting them to spaces.
+\end{itemize}
+
+Ruff skips everything in \cd{.gitignore} (\cd{.venv}, \cd{.web}, \cd{__pycache__}), so it never checks generated code.
+
+\textbf{Running it}, from the repo root:
+
+\begin{code}
+ruff check .              # report problems; changes nothing
+ruff check . --fix        # also fix the problems that are safe to fix automatically
+ruff format --check .     # list files the formatter would change; changes nothing
+ruff format .             # reformat every file
+\end{code}
+
+A typical first report:
+
+\begin{code}
+chapter2/phonebook/phonebook/state.py:93:4: F841 Local variable `response` is assigned to but never used
+\end{code}
+
+The format is \emph{file:line:column: code message}. Look at the reported line before fixing: an unused variable often means the code meant to do something with it and doesn't.
+
+\textbf{In VS Code}, install the \textbf{Ruff} extension (publisher: Astral). It shows problems as you type, using the same \cd{ruff.toml}. To format on save, add to \cd{.vscode/settings.json}:
+
+\begin{code}
+{
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true
+  }
+}
+\end{code}
+
+\subsection{Summary of what changed in the notes example}
+
+\begin{center}
+\begin{tabularx}{0.98\textwidth}{@{}lX@{}}
+\toprule
+\textbf{File} & \textbf{Change} \\
+\midrule
+\cd{notes_backend/schemas.py} & \cd{str_strip_whitespace}, \cd{min_length=5}, \cd{max_length=200} in both input schemas; the \cd{not_shouting} validator in \cd{NoteCreate} \\
+\cd{notes_backend/main.py} & \cd{exclude_none=True} in \cd{update_note} \\
+\cd{notes/services/note_service.py} & new \cd{error_detail} function \\
+\cd{notes/notes.py} & \cd{add_note} catches \cd{400}/\cd{422} and shows the message \\
+\cd{requirements-dev.txt} & new: \cd{ruff==0.17.1} \\
+\cd{ruff.toml} & new: Ruff configuration \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Exercises 3.19--3.22}
+
+\textbf{Limits for these exercises:}
+\begin{itemize}
+\item Every validation rule lives in the Pydantic schemas in \cd{schemas.py}. No \cd{if} checks for length or format inside routes.
+\item Create (\cd{PersonCreate}) and update (\cd{PersonUpdate}) must enforce the same rules for the fields they share.
+\item The frontend shows the backend's message. Don't copy the rules into the frontend.
+\item Ruff goes only in \cd{requirements-dev.txt}, never in an app's \cd{requirements.txt}.
+\end{itemize}
+
+\begin{exercise}{3.19: Phonebook database, step 7}
+In \cd{chapter3/phonebook_backend/schemas.py}:
+\begin{itemize}
+\item a name must be at least 3 characters long, after removing surrounding spaces;
+\item a number must not be empty, after removing surrounding spaces.
+\end{itemize}
+In the phonebook frontend, when adding a person fails with \cd{400} or \cd{422}, show the backend's message in your failure notification (the \cd{"failure"} class from 2.17) instead of crashing. Add an \cd{error_detail} function to \cd{services/person_service.py}, as in the notes example. Check it by adding a person named \cd{Al}.
+\end{exercise}
+
+\begin{exercise}{3.20*: Phonebook database, step 8}
+A phone number must be at least 8 characters long, and consist of two parts separated by \cd{-}: the first part has 2 or 3 digits, and the second part has only digits.
+
+\begin{center}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Valid} & \textbf{Invalid} \\
+\midrule
+\cd{09-1234556} & \cd{1234556} (no dash) \\
+\cd{040-22334455} & \cd{1-22334455} (first part too short) \\
+\cd{12-345678} & \cd{10-22-334455} (two dashes) \\
+ & \cd{12-3456} (only 7 characters) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Note that both rules are needed: the format alone would accept \cd{12-3}, which is too short. Use \cd{pattern} or a \cd{field_validator}. The rule applies to \cd{PersonUpdate} too, so replacing a number with an invalid one also shows the error in the frontend; that error comes from the handler that updates a number, which so far only handles \cd{404}.
+\end{exercise}
+
+\begin{exercise}{3.21: Deploying the validated version}
+Commit, push, and wait until both Render services show ``Deploy live'' in their Events tab. Then check in the \emph{deployed} frontend that the errors from 3.19 and 3.20 appear.
+\end{exercise}
+
+\begin{exercise}{3.22: Lint configuration}
+Set up Ruff as described above (\cd{requirements-dev.txt}, \cd{ruff.toml}, and the VS Code extension if you use VS Code). Then:
+\begin{enumerate}
+\item Run \cd{ruff check .} and fix everything it reports. Also check every \cd{except} branch in the phonebook frontend: for statuses you don't handle, the error should be raised, not ignored.
+\item Run \cd{ruff format .} and commit the result in a \textbf{separate commit}, so the formatting changes don't get mixed up with real changes in Git history.
+\item \cd{ruff check .} must report \cd{All checks passed!}.
+\end{enumerate}
+\end{exercise}

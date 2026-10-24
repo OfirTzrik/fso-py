@@ -1,0 +1,67 @@
+\documentclass[11pt,openany]{book}
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{fontspec}
+\setmainfont{TeX Gyre Pagella}
+\setsansfont{TeX Gyre Heros}
+\setmonofont{DejaVu Sans Mono}[Scale=0.84]
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage{tcolorbox}
+\tcbuselibrary{breakable,skins}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xurl}
+\urlstyle{tt}
+\usepackage{bookmark}
+\setlist{itemsep=2pt,topsep=4pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{6pt}
+\setlength{\emergencystretch}{3em}
+
+\definecolor{codebg}{HTML}{F6F8FA}
+\definecolor{codeframe}{HTML}{D0D7DE}
+\definecolor{kw}{HTML}{8250DF}
+\definecolor{str}{HTML}{0A3069}
+\definecolor{cmt}{HTML}{6E7781}
+\definecolor{fsoblue}{HTML}{1F4E79}
+\definecolor{notebg}{HTML}{EAF2FB}
+\definecolor{warnbg}{HTML}{FFF4E5}
+\definecolor{exbg}{HTML}{EEF7EE}
+
+\titleformat{\chapter}[display]{\sffamily\bfseries\color{fsoblue}}{\Large Chapter \thechapter}{4pt}{\Huge}
+\titleformat{\section}{\sffamily\bfseries\Large\color{fsoblue}}{}{0pt}{}
+\titleformat{\subsection}{\sffamily\bfseries\large}{}{0pt}{}
+\titleformat{\subsubsection}{\sffamily\bfseries\normalsize}{}{0pt}{}
+\setcounter{secnumdepth}{0}
+\setcounter{tocdepth}{1}
+
+\lstdefinestyle{base}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single, rulecolor=\color{codeframe}, framesep=4pt,
+  xleftmargin=6pt, xrightmargin=6pt,
+  tabsize=4, showstringspaces=false, columns=fullflexible, keepspaces=true,
+  breaklines=true, breakatwhitespace=false, upquote=true,
+  aboveskip=8pt, belowskip=8pt,
+  extendedchars=true,
+  literate={├}{{├}}1 {─}{{─}}1 {└}{{└}}1 {│}{{│}}1 {←}{{←}}1 {→}{{→}}1 {↔}{{↔}}1
+           {✓}{{✓}}1 {é}{{é}}1 {·}{{·}}1 {…}{{…}}1 {—}{{—}}1 {–}{{–}}1 {×}{{×}}1,
+}
+\lstdefinestyle{py}{style=base, language=Python,
+  keywordstyle=\color{kw}\bfseries,
+  morekeywords={async,await,None,True,False,self,yield,match,case,nonlocal},
+  stringstyle=\color{str}, commentstyle=\color{cmt}\itshape,
+}
+\lstdefinestyle{plain}{style=base}
+\lstnewenvironment{py}{\lstset{style=py}}{}
+\usepackage{fvextra}
+\newenvironment{code}{\VerbatimEnvironment\begin{tcolorbox}[breakable, enhanced, colback=codebg, colframe=codeframe, boxrule=0.4pt, arc=0pt, left=4pt, right=4pt, top=2pt, bottom=2pt, before skip=8pt, after skip=8pt]\begin{Verbatim}[fontsize=\small, breaklines, breakanywhere, tabsize=4]}{\end{Verbatim}\end{tcolorbox}}
+\newcommand{\cd}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\icode}{\lstinline[basicstyle=\ttfamily,columns=fixed,keepspaces=true]}
+
+\newtcolorbox{note}[1][Note]{breakable, enhanced, colback=notebg, colframe=fsoblue!60, boxrule=0.5pt, arc=2pt, left=6pt, right=6pt, title={\sffamily\bfseries #1}, fonttitle=\small, coltitle=white}
+\newtcolorbox{warn}[1][Watch out]{breakable, enhanced, colback=warnbg, colframe=orange!80!black, boxrule=0.5pt, arc=2pt, left=6pt, right=6pt, title={\sffamily\bfseries #1}, fonttitle=\small, coltitle=white}
+\newtcolorbox{exercise}[1]{breakable, enhanced, colback=exbg, colframe=green!40!black, boxrule=0.5pt, arc=2pt, left=6pt, right=6pt, title={\sffamily\bfseries #1}, fonttitle=\small, coltitle=white}
